@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyGigEVision"
+version = "0.0.1"
+description = "Reserved."
+license = "MIT"
+requires-python = ">=3.9"
+readme = "PYPI_README.rst"
+authors = [
+    { name = "jasasonc" },
+]
+maintainers = [
+    { name = "jasasonc" },
+    { name = "LolloCappo" },
+    { name = "jankoslavic" },
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/pyGigEVision/",
+]
+exclude = [
+    "README.rst",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pyGigEVision"]
