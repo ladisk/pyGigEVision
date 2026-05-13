@@ -5,9 +5,9 @@ build-backend = "hatchling.build"
 [project]
 name = "pyGigEVision"
 version = "0.0.1"
-description = "Reserved."
+description = "Pure-Python implementation of the GigE Vision protocol (GVCP + GVSP)."
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 readme = "PYPI_README.rst"
 authors = [
     { name = "jasasonc" },
@@ -17,11 +17,36 @@ maintainers = [
     { name = "LolloCappo" },
     { name = "jankoslavic" },
 ]
+keywords = ["gige", "gigevision", "machine vision", "camera", "industrial"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: System :: Hardware :: Hardware Drivers",
 ]
+dependencies = [
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov"]
+
+[project.urls]
+Homepage = "https://github.com/ladisk/pyGigEVision"
+Repository = "https://github.com/ladisk/pyGigEVision"
+Issues = "https://github.com/ladisk/pyGigEVision/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.hatch.build.targets.sdist]
 include = [
