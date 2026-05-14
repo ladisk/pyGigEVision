@@ -15,7 +15,7 @@ Quickstart::
     # ... configure registers, start GVSPReceiver, grab frames
 """
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 from .gvcp import GVCPClient, GVCPError
 from .gvsp import GVSPReceiver
