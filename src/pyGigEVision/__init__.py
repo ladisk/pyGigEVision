@@ -22,6 +22,12 @@ from .gvsp import GVSPReceiver
 from .genicam import fetch_genicam_xml, parse_first_url
 from .bootstrap import bootstrap
 
+# Namespace note: the line above re-exports the function `bootstrap` at the
+# package level, which shadows the `bootstrap` submodule when accessed as a
+# package attribute. `pyGigEVision.bootstrap` is the function; to get the
+# submodule object (e.g., for `unittest.mock.patch.object`), use
+# `importlib.import_module("pyGigEVision.bootstrap")`.
+
 # `discover` is a @staticmethod on GVCPClient — alias to the package level
 # so users can `from pyGigEVision import discover`.
 discover = GVCPClient.discover

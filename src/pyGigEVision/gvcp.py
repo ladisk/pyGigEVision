@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Optional
 
-from .standard import REG_CCP, REG_HEARTBEAT_TIMEOUT, REG_FIRST_URL
+from .standard import REG_CCP
 
 # --- GVCP Constants ---
 GVCP_PORT = 3956
