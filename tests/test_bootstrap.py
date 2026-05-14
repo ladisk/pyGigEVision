@@ -1,16 +1,10 @@
 """Tests for bootstrap() helper — uses a fake GVCPClient."""
 
 import importlib
-import sys
 from unittest.mock import MagicMock, patch
 
-import pyGigEVision  # noqa: F401 — ensures submodules are registered in sys.modules
-import pyGigEVision.bootstrap  # ensure the submodule is loaded
+boot_mod = importlib.import_module("pyGigEVision.bootstrap")
 from pyGigEVision.standard import REG_CCP, REG_HEARTBEAT_TIMEOUT
-
-# Always resolve to the actual submodule, even when __init__ re-exports
-# a `bootstrap` function under the same name.
-boot_mod = sys.modules["pyGigEVision.bootstrap"]
 
 
 def test_bootstrap_writes_ccp_and_heartbeat_then_fetches_xml():
