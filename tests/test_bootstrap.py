@@ -3,8 +3,9 @@
 import importlib
 from unittest.mock import MagicMock, patch
 
-boot_mod = importlib.import_module("pyGigEVision.bootstrap")
 from pyGigEVision.standard import REG_CCP, REG_HEARTBEAT_TIMEOUT
+
+boot_mod = importlib.import_module("pyGigEVision.bootstrap")
 
 
 def test_bootstrap_writes_ccp_and_heartbeat_then_fetches_xml():

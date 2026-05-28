@@ -4,8 +4,6 @@ import io
 import zipfile
 from unittest.mock import MagicMock
 
-import pytest
-
 from pyGigEVision.genicam import fetch_genicam_xml, parse_first_url
 
 

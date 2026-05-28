@@ -6,8 +6,8 @@ XML descriptor. Vendor drivers use this to skip boilerplate, or roll
 their own if they need finer control.
 """
 
-from .gvcp import GVCPClient
 from .genicam import fetch_genicam_xml
+from .gvcp import GVCPClient
 from .standard import REG_CCP, REG_HEARTBEAT_TIMEOUT
 
 # CCP value 2 = exclusive control access

@@ -9,9 +9,9 @@ camera's GenICam XML.
 # ============================================================
 # Bootstrap registers (GigE Vision spec section: device control)
 # ============================================================
-REG_CCP = 0x0A00              # Control Channel Privilege
+REG_CCP = 0x0A00  # Control Channel Privilege
 REG_HEARTBEAT_TIMEOUT = 0x0938
-REG_FIRST_URL = 0x0200        # Location of GenICam XML descriptor URL
+REG_FIRST_URL = 0x0200  # Location of GenICam XML descriptor URL
 
 # ============================================================
 # Stream Channel 0 registers (GigE Vision spec)

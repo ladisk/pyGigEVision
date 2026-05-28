@@ -56,8 +56,7 @@ def fetch_genicam_xml(client):
     """
     url_bytes = client.read_mem(REG_FIRST_URL, 512)
     filename, addr, size = parse_first_url(url_bytes)
-    logger.info("Fetching GenICam descriptor: %s (addr=0x%X, %d bytes)",
-                filename, addr, size)
+    logger.info("Fetching GenICam descriptor: %s (addr=0x%X, %d bytes)", filename, addr, size)
     data = client.read_mem(addr, size)
 
     if filename.lower().endswith(".zip"):

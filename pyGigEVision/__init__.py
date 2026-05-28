@@ -17,10 +17,10 @@ Quickstart::
 
 __version__ = "0.1.0"
 
+from .bootstrap import bootstrap
+from .genicam import fetch_genicam_xml, parse_first_url
 from .gvcp import GVCPClient, GVCPError
 from .gvsp import GVSPReceiver
-from .genicam import fetch_genicam_xml, parse_first_url
-from .bootstrap import bootstrap
 
 # Namespace note: the line above re-exports the function `bootstrap` at the
 # package level, which shadows the `bootstrap` submodule when accessed as a

@@ -4,13 +4,26 @@ These tests verify packet construction and parsing without needing
 a physical camera.
 """
 
+import socket
 import struct
+from unittest.mock import MagicMock
+
 import pytest
 
 from pyGigEVision.gvcp import (
-    GVCPClient, GVCPError, GVCP_KEY, FLAG_ACK, FLAG_BROADCAST,
-    CMD_DISCOVERY, CMD_READREG, CMD_WRITEREG, CMD_READMEM,
-    STATUS_SUCCESS, STATUS_NAMES, READMEM_CHUNK,
+    CMD_DISCOVERY,
+    CMD_READMEM,
+    CMD_READREG,
+    CMD_WRITEREG,
+    FLAG_ACK,
+    FLAG_BROADCAST,
+    GVCP_KEY,
+    READMEM_CHUNK,
+    REG_CCP,
+    STATUS_NAMES,
+    STATUS_SUCCESS,
+    GVCPClient,
+    GVCPError,
 )
 
 
@@ -19,20 +32,17 @@ class TestGVCPPacketFormat:
 
     def test_header_size(self):
         """GVCP header is exactly 8 bytes."""
-        header = struct.pack(">BBHHH", GVCP_KEY, FLAG_ACK,
-                             CMD_READREG, 4, 1)
+        header = struct.pack(">BBHHH", GVCP_KEY, FLAG_ACK, CMD_READREG, 4, 1)
         assert len(header) == 8
 
     def test_header_key(self):
         """First byte is always 0x42."""
-        header = struct.pack(">BBHHH", GVCP_KEY, FLAG_ACK,
-                             CMD_READREG, 4, 1)
+        header = struct.pack(">BBHHH", GVCP_KEY, FLAG_ACK, CMD_READREG, 4, 1)
         assert header[0] == 0x42
 
     def test_discovery_packet(self):
         """Discovery packet: broadcast flag, zero payload."""
-        pkt = struct.pack(">BBHHH", GVCP_KEY, FLAG_BROADCAST,
-                          CMD_DISCOVERY, 0, 0xFFFF)
+        pkt = struct.pack(">BBHHH", GVCP_KEY, FLAG_BROADCAST, CMD_DISCOVERY, 0, 0xFFFF)
         assert len(pkt) == 8
         assert struct.unpack(">H", pkt[2:4])[0] == CMD_DISCOVERY
         assert struct.unpack(">H", pkt[4:6])[0] == 0  # no payload
@@ -62,8 +72,7 @@ class TestGVCPPacketFormat:
         """req_id must be 2 bytes (H), not 4 bytes (I)."""
         # This was bug #1 in the original driver
         req_id = 42
-        header = struct.pack(">BBHHH", GVCP_KEY, FLAG_ACK,
-                             CMD_READREG, 4, req_id)
+        header = struct.pack(">BBHHH", GVCP_KEY, FLAG_ACK, CMD_READREG, 4, req_id)
         parsed_id = struct.unpack(">H", header[6:8])[0]
         assert parsed_id == req_id
 
@@ -87,7 +96,7 @@ class TestGVCPError:
 
     def test_all_known_statuses(self):
         """Every status in STATUS_NAMES has a human-readable name."""
-        for code, name in STATUS_NAMES.items():
+        for _code, name in STATUS_NAMES.items():
             assert isinstance(name, str)
             assert len(name) > 0
 
@@ -118,6 +127,7 @@ class TestConstants:
 
     def test_gvcp_port(self):
         from pyGigEVision.gvcp import GVCP_PORT
+
         assert GVCP_PORT == 3956
 
     def test_command_codes(self):
@@ -131,27 +141,20 @@ class TestConstants:
 # Tests for _send_cmd robustness (ACK ID validation, retries, PENDING_ACK)
 # ---------------------------------------------------------------------------
 
-import socket
-import time
-from unittest.mock import MagicMock, patch, PropertyMock
-from pyGigEVision.gvcp import REG_CCP
 
-
-def _make_ack(status: int, ack_cmd: int, payload_len: int,
-              ack_id: int, extra: bytes = b"") -> bytes:
+def _make_ack(
+    status: int, ack_cmd: int, payload_len: int, ack_id: int, extra: bytes = b""
+) -> bytes:
     """Build a raw GVCP ACK packet."""
     return struct.pack(">HHHH", status, ack_cmd, payload_len, ack_id) + extra
 
 
-def _make_readreg_ack(ack_id: int, value: int,
-                      status: int = STATUS_SUCCESS) -> bytes:
+def _make_readreg_ack(ack_id: int, value: int, status: int = STATUS_SUCCESS) -> bytes:
     """Build a READREG_ACK with a 4-byte register value."""
-    return _make_ack(status, CMD_READREG | 0x0001, 4, ack_id,
-                     struct.pack(">I", value))
+    return _make_ack(status, CMD_READREG | 0x0001, 4, ack_id, struct.pack(">I", value))
 
 
-def _make_writereg_ack(ack_id: int,
-                       status: int = STATUS_SUCCESS) -> bytes:
+def _make_writereg_ack(ack_id: int, status: int = STATUS_SUCCESS) -> bytes:
     """Build a WRITEREG_ACK (no extra payload)."""
     return _make_ack(status, CMD_WRITEREG | 0x0001, 0, ack_id)
 
@@ -278,8 +281,7 @@ class TestSendCmdTimeout:
         """Non-SUCCESS status in matching ACK raises GVCPError."""
         client = _client_with_mock_socket()
         ack = _make_readreg_ack(ack_id=1, value=0, status=0x8006)
-        client._sock.recvfrom = MagicMock(
-            return_value=(ack, ("192.168.1.1", 3956)))
+        client._sock.recvfrom = MagicMock(return_value=(ack, ("192.168.1.1", 3956)))
 
         with pytest.raises(GVCPError, match="ACCESS_DENIED"):
             client._read_reg_raw(0xD300)
@@ -295,9 +297,7 @@ class TestSendCmdPendingAck:
 
         # PENDING_ACK: ack_cmd=0x0089, extra 4 bytes = timeout in ms
         pending_timeout_ms = 2000
-        pending_ack = _make_ack(
-            STATUS_SUCCESS, 0x0089, 4, 0,
-            struct.pack(">I", pending_timeout_ms))
+        pending_ack = _make_ack(STATUS_SUCCESS, 0x0089, 4, 0, struct.pack(">I", pending_timeout_ms))
 
         good_ack = _make_readreg_ack(ack_id=1, value=0x42)
 
@@ -327,8 +327,7 @@ class TestHeartbeatControlLoss:
 
         # Simulate CCP register returning 0 (no control)
         ack = _make_readreg_ack(ack_id=1, value=0x00000000)
-        client._sock.recvfrom = MagicMock(
-            return_value=(ack, ("192.168.1.1", 3956)))
+        client._sock.recvfrom = MagicMock(return_value=(ack, ("192.168.1.1", 3956)))
 
         # Call _read_reg_raw directly to simulate what heartbeat does
         with client._lock:
@@ -345,8 +344,7 @@ class TestHeartbeatControlLoss:
         client._control_lost = False
 
         ack = _make_readreg_ack(ack_id=1, value=0x00000002)
-        client._sock.recvfrom = MagicMock(
-            return_value=(ack, ("192.168.1.1", 3956)))
+        client._sock.recvfrom = MagicMock(return_value=(ack, ("192.168.1.1", 3956)))
 
         with client._lock:
             value = client._read_reg_raw(REG_CCP)

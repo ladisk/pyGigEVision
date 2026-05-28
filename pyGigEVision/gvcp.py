@@ -12,11 +12,11 @@ ACK header is 8 bytes:
     status(2B) + ack_cmd(2B) + length(2B) + ack_id(2B)
 """
 
+import contextlib
 import socket
 import struct
 import threading
 import time
-from typing import Optional
 
 from .standard import REG_CCP
 
@@ -74,18 +74,17 @@ class GVCPClient:
             cam.write_float(0xE808, 100.0)
     """
 
-    def __init__(self, camera_ip: str, local_ip: Optional[str] = None,
-                 timeout: float = 2.0):
+    def __init__(self, camera_ip: str, local_ip: str | None = None, timeout: float = 2.0):
         self.camera_ip = camera_ip
         self.local_ip = local_ip or ""
         self.timeout = timeout
 
-        self._sock: Optional[socket.socket] = None
+        self._sock: socket.socket | None = None
         self._lock = threading.Lock()
         self._req_id = 0
         self._connected = False
         self._control_lost = False
-        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_thread: threading.Thread | None = None
         self._heartbeat_stop = threading.Event()
         self._n_retries = 3
         self._cmd_timeout = 0.5  # seconds per attempt
@@ -120,23 +119,18 @@ class GVCPClient:
             if interface_ip:
                 sock.bind((interface_ip, 0))
 
-            pkt = struct.pack(">BBHHH", GVCP_KEY, FLAG_BROADCAST,
-                              CMD_DISCOVERY, 0, 0xFFFF)
+            pkt = struct.pack(">BBHHH", GVCP_KEY, FLAG_BROADCAST, CMD_DISCOVERY, 0, 0xFFFF)
 
             # Send to broadcast addresses
             for dest in ("255.255.255.255",):
-                try:
+                with contextlib.suppress(OSError):
                     sock.sendto(pkt, (dest, GVCP_PORT))
-                except OSError:
-                    pass
             # Also try subnet broadcast if we have an interface IP
             if interface_ip:
                 parts = interface_ip.split(".")
                 subnet_broadcast = f"{parts[0]}.{parts[1]}.255.255"
-                try:
+                with contextlib.suppress(OSError):
                     sock.sendto(pkt, (subnet_broadcast, GVCP_PORT))
-                except OSError:
-                    pass
 
             cameras = []
             seen_ips = set()
@@ -153,9 +147,12 @@ class GVCPClient:
                     # Parse discovery ACK payload (starts at byte 8)
                     payload = data[8:]
 
-                    def _str(offset, size):
-                        return payload[offset:offset + size].split(b"\x00")[0].decode(
-                            "ascii", errors="replace")
+                    def _str(offset, size, _payload=payload):
+                        return (
+                            _payload[offset : offset + size]
+                            .split(b"\x00")[0]
+                            .decode("ascii", errors="replace")
+                        )
 
                     # Try extended format first (some cameras add 24 bytes before strings)
                     # then fall back to standard offsets
@@ -164,31 +161,35 @@ class GVCPClient:
 
                     if mfr_ext and not mfr_std:
                         # Extended discovery format
-                        cameras.append({
-                            "ip": addr[0],
-                            "spec_version": f"{struct.unpack('>H', payload[0:2])[0]}."
-                                            f"{struct.unpack('>H', payload[2:4])[0]}",
-                            "manufacturer": mfr_ext,
-                            "model": _str(104, 32),
-                            "device_version": _str(136, 32),
-                            "manufacturer_info": _str(168, 48),
-                            "serial": _str(216, 16),
-                            "user_name": _str(232, 16),
-                        })
+                        cameras.append(
+                            {
+                                "ip": addr[0],
+                                "spec_version": f"{struct.unpack('>H', payload[0:2])[0]}."
+                                f"{struct.unpack('>H', payload[2:4])[0]}",
+                                "manufacturer": mfr_ext,
+                                "model": _str(104, 32),
+                                "device_version": _str(136, 32),
+                                "manufacturer_info": _str(168, 48),
+                                "serial": _str(216, 16),
+                                "user_name": _str(232, 16),
+                            }
+                        )
                     else:
                         # Standard discovery format
-                        cameras.append({
-                            "ip": addr[0],
-                            "spec_version": f"{struct.unpack('>H', payload[0:2])[0]}."
-                                            f"{struct.unpack('>H', payload[2:4])[0]}",
-                            "manufacturer": mfr_std,
-                            "model": _str(80, 32),
-                            "device_version": _str(112, 32),
-                            "manufacturer_info": _str(144, 48),
-                            "serial": _str(192, 16),
-                            "user_name": _str(208, 16),
-                        })
-                except socket.timeout:
+                        cameras.append(
+                            {
+                                "ip": addr[0],
+                                "spec_version": f"{struct.unpack('>H', payload[0:2])[0]}."
+                                f"{struct.unpack('>H', payload[2:4])[0]}",
+                                "manufacturer": mfr_std,
+                                "model": _str(80, 32),
+                                "device_version": _str(112, 32),
+                                "manufacturer_info": _str(144, 48),
+                                "serial": _str(192, 16),
+                                "user_name": _str(208, 16),
+                            }
+                        )
+                except TimeoutError:
                     break
         finally:
             sock.close()
@@ -232,13 +233,16 @@ class GVCPClient:
                     if e.status == 0x8006 and force:  # ACCESS_DENIED
                         attempt += 1
                         if attempt == 1:
-                            print("ACCESS_DENIED: waiting for stale CCP lock "
-                                  "to expire...", flush=True)
+                            print(
+                                "ACCESS_DENIED: waiting for stale CCP lock to expire...", flush=True
+                            )
                         if time.monotonic() >= deadline:
                             raise GVCPError(
                                 "Could not take CCP control after "
                                 f"{max_wait:.0f}s — another application may "
-                                "be actively connected", 0x8006)
+                                "be actively connected",
+                                0x8006,
+                            ) from e
                         time.sleep(1.0)
                     else:
                         raise
@@ -251,8 +255,7 @@ class GVCPClient:
 
         # Start heartbeat
         self._heartbeat_stop.clear()
-        self._heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop, daemon=True)
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self._heartbeat_thread.start()
 
     def disconnect(self):
@@ -264,10 +267,8 @@ class GVCPClient:
         if self._heartbeat_thread:
             self._heartbeat_thread.join(timeout=5.0)
 
-        try:
+        with contextlib.suppress(OSError, GVCPError):
             self._write_reg_raw(REG_CCP, 0x00000000)
-        except (OSError, GVCPError):
-            pass
 
         self._connected = False
         if self._sock:
@@ -327,11 +328,10 @@ class GVCPClient:
         deadline.
         """
         req_id = self._next_id()
-        header = struct.pack(">BBHHH", GVCP_KEY, flag, cmd,
-                             len(payload), req_id)
+        header = struct.pack(">BBHHH", GVCP_KEY, flag, cmd, len(payload), req_id)
         hard_deadline = time.monotonic() + 30.0
 
-        for attempt in range(self._n_retries):
+        for _attempt in range(self._n_retries):
             self._sock.sendto(header + payload, (self.camera_ip, GVCP_PORT))
 
             deadline = time.monotonic() + self._cmd_timeout
@@ -342,7 +342,7 @@ class GVCPClient:
                 self._sock.settimeout(max(remaining, 0.01))
                 try:
                     data, _ = self._sock.recvfrom(8192)
-                except socket.timeout:
+                except TimeoutError:
                     break  # this attempt timed out, retry
 
                 if len(data) < 8:
@@ -366,13 +366,10 @@ class GVCPClient:
 
                 # Got our response
                 if ack_status != STATUS_SUCCESS:
-                    raise GVCPError(
-                        f"Command 0x{cmd:04X} failed", ack_status)
+                    raise GVCPError(f"Command 0x{cmd:04X} failed", ack_status)
                 return data
 
-        raise GVCPError(
-            f"Timeout waiting for ACK (cmd=0x{cmd:04X}, "
-            f"{self._n_retries} retries)")
+        raise GVCPError(f"Timeout waiting for ACK (cmd=0x{cmd:04X}, {self._n_retries} retries)")
 
     def _read_reg_raw(self, addr: int) -> int:
         """Internal: read single register (not locked)."""
@@ -394,11 +391,11 @@ class GVCPClient:
 
     # --- Packet Resend ---
 
-    def send_packetresend(self, block_id: int, first_packet_id: int,
-                          last_packet_id: int, stream_channel: int = 0):
+    def send_packetresend(
+        self, block_id: int, first_packet_id: int, last_packet_id: int, stream_channel: int = 0
+    ):
         """Request retransmission of missing GVSP packets."""
-        payload = struct.pack(">HHII", stream_channel, block_id,
-                              first_packet_id, last_packet_id)
+        payload = struct.pack(">HHII", stream_channel, block_id, first_packet_id, last_packet_id)
         with self._lock:
             self._send_cmd(FLAG_ACK, CMD_PACKETRESEND, payload)
 

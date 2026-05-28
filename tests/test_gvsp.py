@@ -3,13 +3,15 @@
 Tests frame buffer logic and packet parsing without a physical camera.
 """
 
-import struct
 import numpy as np
-import pytest
 
 from pyGigEVision.gvsp import (
-    _FrameBuffer, GVSPReceiver, PIXEL_MONO16, PIXEL_MONO8,
-    PIXEL_BPP, PIXEL_DTYPE, PACKET_LEADER, PACKET_DATA, PACKET_TRAILER,
+    PIXEL_BPP,
+    PIXEL_DTYPE,
+    PIXEL_MONO8,
+    PIXEL_MONO16,
+    GVSPReceiver,
+    _FrameBuffer,
 )
 
 
@@ -21,8 +23,7 @@ class TestFrameBuffer:
         assert not buf.is_complete()
         assert buf.assemble() is None
 
-    def _make_buf(self, width, height, pixel_format=PIXEL_MONO16,
-                  packet_data_size=1492):
+    def _make_buf(self, width, height, pixel_format=PIXEL_MONO16, packet_data_size=1492):
         """Helper: create a FrameBuffer with pre-allocated buffer."""
         buf = _FrameBuffer(block_id=1)
         buf.leader_received = True
@@ -61,8 +62,7 @@ class TestFrameBuffer:
 
     def test_assemble_mono8(self):
         """Assemble Mono8 frame."""
-        buf = self._make_buf(4, 2, pixel_format=PIXEL_MONO8,
-                             packet_data_size=8)
+        buf = self._make_buf(4, 2, pixel_format=PIXEL_MONO8, packet_data_size=8)
 
         pixels = np.arange(8, dtype=np.uint8)
         buf.write_packet(1, pixels.tobytes())
@@ -100,8 +100,7 @@ class TestFrameBuffer:
         buf.write_packet(1, part1.tobytes())
 
         frame = buf.assemble()
-        np.testing.assert_array_equal(
-            frame.ravel(), [1, 2, 3, 4, 5, 6, 7, 8])
+        np.testing.assert_array_equal(frame.ravel(), [1, 2, 3, 4, 5, 6, 7, 8])
 
     def test_is_complete(self):
         buf = self._make_buf(4, 2, packet_data_size=8)
@@ -131,12 +130,10 @@ class TestContiguousRanges:
         assert GVSPReceiver._contiguous_ranges([1, 2, 3]) == [(1, 3)]
 
     def test_gaps(self):
-        assert GVSPReceiver._contiguous_ranges([1, 2, 5, 6, 7, 10]) == [
-            (1, 2), (5, 7), (10, 10)]
+        assert GVSPReceiver._contiguous_ranges([1, 2, 5, 6, 7, 10]) == [(1, 2), (5, 7), (10, 10)]
 
     def test_all_separate(self):
-        assert GVSPReceiver._contiguous_ranges([1, 3, 5]) == [
-            (1, 1), (3, 3), (5, 5)]
+        assert GVSPReceiver._contiguous_ranges([1, 3, 5]) == [(1, 1), (3, 3), (5, 5)]
 
 
 class TestPixelFormats:
