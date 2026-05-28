@@ -4,22 +4,24 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyGigEVision"
-version = "0.1.0"
+version = "0.1.1"
 description = "Pure-Python implementation of the GigE Vision protocol (GVCP + GVSP)."
 license = "MIT"
 requires-python = ">=3.10"
 readme = "PYPI_README.rst"
 authors = [
-    { name = "jasasonc" },
+    { name = "Jaša Šonc", email = "jasa.sonc@fs.uni-lj.si" },
+    { name = "Janko Slavič", email = "janko.slavic@fs.uni-lj.si" },
 ]
 maintainers = [
-    { name = "jasasonc" },
-    { name = "LolloCappo" },
-    { name = "jankoslavic" },
+    { name = "Jaša Šonc" },
+    { name = "Lorenzo Capponi" },
+    { name = "Janko Slavič" },
 ]
-keywords = ["gige", "gigevision", "machine vision", "camera", "industrial"]
+keywords = ["gige", "gigevision", "machine vision", "camera", "industrial", "GVCP", "GVSP"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
@@ -37,24 +39,53 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-cov"]
-dev = ["pytest", "pytest-cov"]
+dev = [
+    "sphinx",
+    "sphinx-book-theme",
+    "sphinx-copybutton>=0.5.2",
+    "pytest",
+    "pytest-cov",
+    "build",
+    "twine",
+    "wheel",
+    "ruff",
+]
 
 [project.urls]
 Homepage = "https://github.com/ladisk/pyGigEVision"
+Documentation = "https://pygigevision.readthedocs.io"
 Repository = "https://github.com/ladisk/pyGigEVision"
 Issues = "https://github.com/ladisk/pyGigEVision/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/pyGigEVision/",
-]
-exclude = [
+    "pyGigEVision/",
+    "tests/",
+    "docs/",
+    "examples/",
     "README.rst",
+    "PYPI_README.rst",
+    "LICENSE",
+    "CONTRIBUTING.rst",
+    "pyproject.toml",
+    "requirements.txt",
+    "requirements.dev.txt",
+    "sync_version.py",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pyGigEVision"]
+packages = ["pyGigEVision"]
