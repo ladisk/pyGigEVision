@@ -1,0 +1,10 @@
+-r requirements.txt
+sphinx
+sphinx-book-theme
+sphinx-copybutton>=0.5.2
+pytest
+pytest-cov
+build
+twine
+wheel
+ruff
