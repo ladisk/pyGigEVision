@@ -133,10 +133,9 @@ class GVCPClient:
     privilege and start the heartbeat thread.
 
     The client is safe for concurrent use: :meth:`read_reg`,
-    :meth:`write_reg`, :meth:`read_mem`, :meth:`write_mem`,
-    :meth:`read_float`, :meth:`write_float`, and
-    :meth:`send_packetresend` all acquire the internal ``_lock`` before
-    touching the socket.
+    :meth:`write_reg`, :meth:`read_mem`, :meth:`read_float`,
+    :meth:`write_float`, and :meth:`send_packetresend` all acquire the
+    internal ``_lock`` before touching the socket.
 
     Examples
     --------

@@ -28,6 +28,13 @@ jobs:
           pip install build twine
 
       - name: Sync version from tag
+        # If the tagged commit was already pre-synced (e.g., the version
+        # was bumped in a commit that was then tagged), this is a no-op
+        # and sync_version.py prints "unchanged" for each target file —
+        # the next step's `git diff --cached --quiet` then skips the
+        # commit. The push still runs, fast-forwarding origin/main to
+        # the current HEAD (which IS the tagged commit in the no-op
+        # case), which is safe.
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           python sync_version.py "$VERSION"
