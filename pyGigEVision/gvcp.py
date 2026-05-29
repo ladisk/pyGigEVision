@@ -1,16 +1,32 @@
+"""GigE Vision Control Protocol (GVCP) client.
+
+Implements the UDP-based control protocol from the GigE Vision
+specification: device discovery (broadcast), register read/write
+(``READREG``/``WRITEREG``), bulk memory access (``READMEM``), and
+heartbeat keepalive for the ``Control Channel Privilege`` register.
+
+The protocol runs on UDP port 3956. Each packet is an 8-byte header
+followed by a payload. Header layout::
+
+    key(1B=0x42) flag(1B) command(2B) payload_len(2B) req_id(2B)
+
+ACK packets use an 8-byte response header::
+
+    status(2B) ack_cmd(2B) length(2B) ack_id(2B)
+
+This module is vendor-agnostic. The same code works against any GigE
+Vision compliant camera; vendor-specific register addresses and features
+are layered on top by vendor drivers.
+
+See Also
+--------
+pyGigEVision.gvsp : The streaming counterpart (GVSP).
+pyGigEVision.standard : GigE Vision spec register addresses.
+pyGigEVision.bootstrap : Convenience helper to perform the standard
+    boot sequence (open GVCP, take CCP, start heartbeat, fetch XML).
 """
-GigE Vision Control Protocol (GVCP) client.
 
-Implements UDP-based camera discovery, register read/write, memory access,
-and heartbeat keepalive for GigE Vision v1.2 devices.
-
-This module is generic — it works with any GigE Vision camera.
-
-Protocol: UDP port 3956. Packet header is 8 bytes:
-    key(1B=0x42) + flag(1B) + command(2B) + payload_len(2B) + req_id(2B)
-ACK header is 8 bytes:
-    status(2B) + ack_cmd(2B) + length(2B) + ack_id(2B)
-"""
+from __future__ import annotations
 
 import contextlib
 import socket
@@ -56,9 +72,35 @@ READMEM_CHUNK = 512
 
 
 class GVCPError(Exception):
-    """GVCP protocol error with status code."""
+    """GVCP protocol error raised when the camera returns a non-SUCCESS status.
 
-    def __init__(self, message: str, status: int = 0):
+    Attributes
+    ----------
+    status : int
+        Numeric GVCP status code, e.g. ``0x8006`` for ACCESS_DENIED.
+    status_name : str
+        Human-readable name from :data:`STATUS_NAMES`, or
+        ``"UNKNOWN_0xXXXX"`` for unrecognised codes.
+
+    Parameters
+    ----------
+    message : str
+        Short description of what operation failed.
+    status : int, optional
+        GVCP status code returned by the camera.  Default is ``0``
+        (``SUCCESS``), used when the error is locally generated (e.g.
+        timeout after all retries).
+
+    Examples
+    --------
+    >>> err = GVCPError("Register read failed", 0x8006)
+    >>> err.status
+    32774
+    >>> err.status_name
+    'ACCESS_DENIED'
+    """
+
+    def __init__(self, message: str, status: int = 0) -> None:
         self.status = status
         self.status_name = STATUS_NAMES.get(status, f"UNKNOWN_0x{status:04X}")
         super().__init__(f"{message} (status: {self.status_name})")
@@ -67,14 +109,60 @@ class GVCPError(Exception):
 class GVCPClient:
     """GigE Vision Control Protocol client for camera register access.
 
-    Usage:
+    Manages a single UDP socket to a specific camera, handles request/ACK
+    sequencing (including stale-ACK discard and PENDING_ACK extension),
+    takes and releases the ``Control Channel Privilege`` (CCP) register,
+    and maintains a background heartbeat thread to keep the session alive.
+
+    Parameters
+    ----------
+    camera_ip : str
+        IPv4 address of the camera, e.g. ``"169.254.67.34"``.
+    local_ip : str or None, optional
+        Local network interface address to bind the GVCP socket to.
+        ``None`` (default) lets the OS choose the interface based on
+        the camera's IP and routing rules.
+    timeout : float, optional
+        Socket timeout in seconds for the initial connection and the
+        overall socket.  Default is ``2.0``.
+
+    Notes
+    -----
+    The constructor does not perform any network I/O.  Call
+    :meth:`connect` (or use the context-manager form) to acquire control
+    privilege and start the heartbeat thread.
+
+    The client is safe for concurrent use: :meth:`read_reg`,
+    :meth:`write_reg`, :meth:`read_mem`, :meth:`write_mem`,
+    :meth:`read_float`, :meth:`write_float`, and
+    :meth:`send_packetresend` all acquire the internal ``_lock`` before
+    touching the socket.
+
+    Examples
+    --------
+    Using the context manager (recommended)::
+
         with GVCPClient("169.254.67.34") as cam:
             width = cam.read_reg(0xD300)
             exposure = cam.read_float(0xE808)
             cam.write_float(0xE808, 100.0)
+
+    Manual lifecycle::
+
+        client = GVCPClient("169.254.67.34")
+        client.connect()
+        try:
+            width = client.read_reg(0xD300)
+        finally:
+            client.disconnect()
     """
 
-    def __init__(self, camera_ip: str, local_ip: str | None = None, timeout: float = 2.0):
+    def __init__(
+        self,
+        camera_ip: str,
+        local_ip: str | None = None,
+        timeout: float = 2.0,
+    ) -> None:
         self.camera_ip = camera_ip
         self.local_ip = local_ip or ""
         self.timeout = timeout
@@ -91,26 +179,74 @@ class GVCPClient:
 
     # --- Context Manager ---
 
-    def __enter__(self):
+    def __enter__(self) -> GVCPClient:
+        """Enter the context manager by calling :meth:`connect`.
+
+        Returns
+        -------
+        GVCPClient
+            ``self``, so the ``as`` clause captures the connected client.
+        """
         self.connect()
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: object) -> None:
+        """Exit the context manager by calling :meth:`disconnect`."""
         self.disconnect()
 
     # --- Discovery ---
 
     @staticmethod
     def discover(interface_ip: str = "", timeout: float = 2.0) -> list[dict]:
-        """Broadcast GVCP discovery, return list of found cameras.
+        """Broadcast a GVCP discovery packet and return all responding cameras.
 
-        Args:
-            interface_ip: Local IP to bind to (empty = all interfaces).
-            timeout: How long to wait for responses.
+        Sends a ``CMD_DISCOVERY`` broadcast to ``255.255.255.255`` (and, if
+        *interface_ip* is given, also to the /16 subnet broadcast of that
+        interface) on UDP port 3956.  Parses each discovery ACK into a
+        dictionary.
 
-        Returns:
-            List of dicts with keys: ip, manufacturer, model,
-            device_version, serial, user_name, spec_version.
+        Both the standard GigE Vision discovery ACK layout and the extended
+        layout (used by some cameras that prepend 24 extra bytes before the
+        string fields) are handled.  Duplicate responses from the same IP
+        are deduplicated.
+
+        Parameters
+        ----------
+        interface_ip : str, optional
+            Local interface IPv4 address to bind the socket to, e.g.
+            ``"169.254.0.1"``.  Empty string (default) lets the OS choose,
+            which sends the broadcast on all active interfaces.
+        timeout : float, optional
+            How long to wait for discovery responses, in seconds.
+            Default is ``2.0``.
+
+        Returns
+        -------
+        list of dict
+            One entry per discovered camera.  Each dict has keys:
+
+            ``"ip"``
+                IPv4 address string of the camera.
+            ``"spec_version"``
+                GigE Vision spec version the camera reports, e.g. ``"1.2"``.
+            ``"manufacturer"``
+                Manufacturer name string.
+            ``"model"``
+                Model name string.
+            ``"device_version"``
+                Firmware / device version string.
+            ``"manufacturer_info"``
+                Additional manufacturer info string.
+            ``"serial"``
+                Serial number string.
+            ``"user_name"``
+                User-assigned name string (may be empty).
+
+        Examples
+        --------
+        >>> cameras = GVCPClient.discover(interface_ip="169.254.0.1", timeout=1.0)
+        >>> for cam in cameras:
+        ...     print(cam["ip"], cam["model"])
         """
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -132,8 +268,8 @@ class GVCPClient:
                 with contextlib.suppress(OSError):
                     sock.sendto(pkt, (subnet_broadcast, GVCP_PORT))
 
-            cameras = []
-            seen_ips = set()
+            cameras: list[dict] = []
+            seen_ips: set[str] = set()
             while True:
                 try:
                     data, addr = sock.recvfrom(4096)
@@ -147,7 +283,7 @@ class GVCPClient:
                     # Parse discovery ACK payload (starts at byte 8)
                     payload = data[8:]
 
-                    def _str(offset, size, _payload=payload):
+                    def _str(offset: int, size: int, _payload: bytes = payload) -> str:
                         return (
                             _payload[offset : offset + size]
                             .split(b"\x00")[0]
@@ -198,18 +334,34 @@ class GVCPClient:
 
     # --- Connection ---
 
-    def connect(self, force: bool = True):
-        """Open socket, take control (CCP=2), start heartbeat.
+    def connect(self, force: bool = True) -> None:
+        """Open the UDP socket, take CCP control, and start the heartbeat thread.
 
-        If another application (or a stale session) holds CCP control
-        and ``force`` is True (default), we poll until the heartbeat
-        timeout expires and the lock releases. This handles the common
-        scenario where a previous Python session crashed without
-        disconnecting.
+        If another application (or a stale previous session) holds the CCP
+        control privilege and *force* is ``True``, this method polls with
+        1-second intervals until the remote heartbeat timeout expires and the
+        lock is released automatically by the camera.  This handles the
+        common scenario where a previous Python session crashed without
+        calling :meth:`disconnect`.
 
-        Args:
-            force: If True, poll/retry on ACCESS_DENIED (up to ~15 s).
-                   If False, raise immediately.
+        A call on an already-connected client is a no-op.
+
+        Parameters
+        ----------
+        force : bool, optional
+            If ``True`` (default), retry on ``ACCESS_DENIED`` for up to
+            15 seconds, printing a warning on the first retry.  If
+            ``False``, raise :exc:`GVCPError` immediately when access is
+            denied.
+
+        Raises
+        ------
+        GVCPError
+            If the CCP register write fails for any reason other than
+            ``ACCESS_DENIED``, or if *force* is ``True`` but the 15-second
+            retry window expires without gaining control.
+        OSError
+            If the UDP socket cannot be created or bound.
         """
         if self._connected:
             return
@@ -258,8 +410,16 @@ class GVCPClient:
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self._heartbeat_thread.start()
 
-    def disconnect(self):
-        """Stop heartbeat, release control, close socket."""
+    def disconnect(self) -> None:
+        """Stop the heartbeat, release CCP control, and close the socket.
+
+        Releases the ``Control Channel Privilege`` register (writes 0x00000000
+        to ``REG_CCP``) so other applications can immediately connect without
+        waiting for the heartbeat timeout.  Any errors during the release are
+        silently suppressed to ensure the socket is always closed.
+
+        A call on a client that is not connected is a no-op.
+        """
         if not self._connected:
             return
 
@@ -278,27 +438,154 @@ class GVCPClient:
     # --- Register Access ---
 
     def read_reg(self, addr: int) -> int:
-        """Read a single 32-bit register, return raw uint32."""
+        """Read a single 32-bit register from the camera.
+
+        Sends a ``READREG`` command and returns the raw unsigned 32-bit value.
+        Thread-safe: acquires the internal socket lock before sending.
+
+        Parameters
+        ----------
+        addr : int
+            Register address (32-bit unsigned).  Use constants from
+            :mod:`pyGigEVision.standard` for spec-defined registers, or
+            vendor-specific addresses from the camera's GenICam XML.
+
+        Returns
+        -------
+        int
+            Raw register value as a 32-bit unsigned integer.
+
+        Raises
+        ------
+        GVCPError
+            If the camera returns a non-SUCCESS status, or if all retry
+            attempts time out.
+
+        Examples
+        --------
+        >>> with GVCPClient("169.254.67.34") as cam:
+        ...     width = cam.read_reg(0xD300)
+        ...     print(f"Width: {width}")
+        """
         with self._lock:
             return self._read_reg_raw(addr)
 
     def read_float(self, addr: int) -> float:
-        """Read a register as IEEE 754 big-endian float."""
+        """Read a register and interpret it as an IEEE 754 big-endian float.
+
+        Reads the raw 32-bit value from *addr* via :meth:`read_reg` and
+        reinterprets the bit pattern as a single-precision float.
+
+        Parameters
+        ----------
+        addr : int
+            Register address (32-bit unsigned) of the float-valued register.
+
+        Returns
+        -------
+        float
+            The register value reinterpreted as a 32-bit IEEE 754
+            single-precision float.
+
+        Raises
+        ------
+        GVCPError
+            If the underlying :meth:`read_reg` call fails.
+
+        Examples
+        --------
+        >>> with GVCPClient("169.254.67.34") as cam:
+        ...     exposure_us = cam.read_float(0xE808)
+        """
         raw = self.read_reg(addr)
         return struct.unpack(">f", struct.pack(">I", raw))[0]
 
-    def write_reg(self, addr: int, value: int):
-        """Write a 32-bit unsigned integer to a register."""
+    def write_reg(self, addr: int, value: int) -> None:
+        """Write a 32-bit unsigned integer to a camera register.
+
+        Sends a ``WRITEREG`` command.  Thread-safe: acquires the internal
+        socket lock before sending.
+
+        Parameters
+        ----------
+        addr : int
+            Register address (32-bit unsigned).
+        value : int
+            Value to write (32-bit unsigned, 0–4294967295).
+
+        Raises
+        ------
+        GVCPError
+            If the camera returns a non-SUCCESS status (e.g. ``WRITE_PROTECT``,
+            ``ACCESS_DENIED``), or if all retry attempts time out.
+
+        Examples
+        --------
+        >>> with GVCPClient("169.254.67.34") as cam:
+        ...     cam.write_reg(0xD300, 640)
+        """
         with self._lock:
             self._write_reg_raw(addr, value)
 
-    def write_float(self, addr: int, value: float):
-        """Write an IEEE 754 float to a register."""
+    def write_float(self, addr: int, value: float) -> None:
+        """Write a float value to a camera register as IEEE 754 big-endian.
+
+        Packs *value* as a 32-bit single-precision float and writes the raw
+        bit pattern to the register at *addr* via :meth:`write_reg`.
+
+        Parameters
+        ----------
+        addr : int
+            Register address (32-bit unsigned) of the float-valued register.
+        value : float
+            Value to write.  The float is packed with big-endian byte order
+            before transmission.
+
+        Raises
+        ------
+        GVCPError
+            If the underlying :meth:`write_reg` call fails.
+
+        Examples
+        --------
+        >>> with GVCPClient("169.254.67.34") as cam:
+        ...     cam.write_float(0xE808, 1000.0)  # set exposure to 1000 µs
+        """
         raw = struct.unpack(">I", struct.pack(">f", value))[0]
         self.write_reg(addr, raw)
 
     def read_mem(self, addr: int, size: int) -> bytes:
-        """Read a memory block (auto-chunks at 512 bytes)."""
+        """Read a contiguous block of camera memory.
+
+        Splits the request into chunks of at most :data:`READMEM_CHUNK` bytes
+        (512 bytes, safe for standard Ethernet) and concatenates the results.
+        Each chunk is read with the lock held, so concurrent register
+        operations may interleave between chunks.
+
+        Parameters
+        ----------
+        addr : int
+            Start address of the memory block (32-bit unsigned).
+        size : int
+            Number of bytes to read.  If *size* is 0, an empty ``bytes``
+            object is returned immediately.
+
+        Returns
+        -------
+        bytes
+            Raw memory contents, exactly *size* bytes.
+
+        Raises
+        ------
+        GVCPError
+            If any ``READMEM`` chunk fails.
+
+        Examples
+        --------
+        >>> with GVCPClient("169.254.67.34") as cam:
+        ...     xml_url = cam.read_mem(0x0200, 512)
+        ...     print(xml_url.split(b"\\x00")[0].decode())
+        """
         result = bytearray()
         offset = 0
         while offset < size:
@@ -312,20 +599,47 @@ class GVCPClient:
     # --- Internal Packet Methods ---
 
     def _next_id(self) -> int:
+        """Increment and return the next request ID (1–65535, wraps at 0xFFFF).
+
+        The value 0 is skipped; after 0xFFFF the counter resets to 1.
+        """
         self._req_id = (self._req_id + 1) & 0xFFFF
         if self._req_id == 0:
             self._req_id = 1
         return self._req_id
 
     def _send_cmd(self, flag: int, cmd: int, payload: bytes = b"") -> bytes:
-        """Send a GVCP command and return raw ACK data.
+        """Send a GVCP command packet and return the raw ACK data.
 
-        Validates that the ACK packet's req_id matches the command we sent.
-        Stale ACKs from previous commands are silently discarded.
-        PENDING_ACK (0x0089) responses extend the deadline.
+        Builds and sends an 8-byte GVCP header followed by *payload*.
+        Reads response packets until one with a matching request ID arrives
+        or all retries are exhausted.
 
-        Retries up to ``_n_retries`` times, each with a ``_cmd_timeout``
-        deadline.
+        Stale ACKs (wrong ``ack_id``) are silently discarded.  Runt packets
+        shorter than 8 bytes are also discarded.  ``PENDING_ACK`` (command
+        code ``0x0089``) responses extend the per-attempt deadline by the
+        number of milliseconds indicated in the response payload, bounded by
+        a hard 30-second absolute deadline.
+
+        Parameters
+        ----------
+        flag : int
+            GVCP flag byte, e.g. :data:`FLAG_ACK` or :data:`FLAG_BROADCAST`.
+        cmd : int
+            GVCP command code, e.g. :data:`CMD_READREG`.
+        payload : bytes, optional
+            Command payload bytes.  Default is empty (no payload).
+
+        Returns
+        -------
+        bytes
+            Raw ACK packet bytes, including the 8-byte ACK header.
+
+        Raises
+        ------
+        GVCPError
+            If the camera returns a non-SUCCESS status in the ACK, or if
+            all ``_n_retries`` attempts time out without a matching ACK.
         """
         req_id = self._next_id()
         header = struct.pack(">BBHHH", GVCP_KEY, flag, cmd, len(payload), req_id)
@@ -372,18 +686,22 @@ class GVCPClient:
         raise GVCPError(f"Timeout waiting for ACK (cmd=0x{cmd:04X}, {self._n_retries} retries)")
 
     def _read_reg_raw(self, addr: int) -> int:
-        """Internal: read single register (not locked)."""
+        """Send a READREG command and return the 32-bit result (not locked)."""
         payload = struct.pack(">I", addr)
         data = self._send_cmd(FLAG_ACK, CMD_READREG, payload)
         return struct.unpack(">I", data[8:12])[0]
 
-    def _write_reg_raw(self, addr: int, value: int):
-        """Internal: write single register (not locked)."""
+    def _write_reg_raw(self, addr: int, value: int) -> None:
+        """Send a WRITEREG command for a single register (not locked)."""
         payload = struct.pack(">II", addr, value)
         self._send_cmd(FLAG_ACK, CMD_WRITEREG, payload)
 
     def _read_mem_raw(self, addr: int, size: int) -> bytes:
-        """Internal: read memory chunk (not locked)."""
+        """Send a READMEM command and return the raw memory bytes (not locked).
+
+        The READMEM ACK layout is: 8-byte ACK header + 4-byte address echo
+        + data, so payload starts at byte offset 12.
+        """
         payload = struct.pack(">IHH", addr, 0, size)
         data = self._send_cmd(FLAG_ACK, CMD_READMEM, payload)
         # READMEM ACK: header(8) + address(4) + data
@@ -392,21 +710,56 @@ class GVCPClient:
     # --- Packet Resend ---
 
     def send_packetresend(
-        self, block_id: int, first_packet_id: int, last_packet_id: int, stream_channel: int = 0
-    ):
-        """Request retransmission of missing GVSP packets."""
+        self,
+        block_id: int,
+        first_packet_id: int,
+        last_packet_id: int,
+        stream_channel: int = 0,
+    ) -> None:
+        """Request retransmission of missing GVSP stream packets.
+
+        Sends a ``CMD_PACKETRESEND`` command asking the camera to re-send the
+        specified packet range for a given stream block.  Used by
+        :class:`pyGigEVision.gvsp.GVSPReceiver` to recover from packet loss.
+
+        Parameters
+        ----------
+        block_id : int
+            The GVSP block (frame) identifier for which packets are missing.
+        first_packet_id : int
+            ID of the first missing packet within the block.
+        last_packet_id : int
+            ID of the last missing packet within the block (inclusive).
+        stream_channel : int, optional
+            GVSP stream channel index.  Default is ``0`` (the only channel
+            on most cameras).
+
+        Raises
+        ------
+        GVCPError
+            If the camera returns a non-SUCCESS status or the request times
+            out after all retries.
+        """
         payload = struct.pack(">HHII", stream_channel, block_id, first_packet_id, last_packet_id)
         with self._lock:
             self._send_cmd(FLAG_ACK, CMD_PACKETRESEND, payload)
 
     # --- Heartbeat ---
 
-    def _heartbeat_loop(self):
-        """Background thread: read CCP every 2s to keep session alive.
+    def _heartbeat_loop(self) -> None:
+        """Background daemon thread that keeps the GVCP session alive.
 
-        Also checks the CCP control bit — if cleared by another
-        application (or firmware), sets ``_control_lost`` so callers
-        can detect it.
+        Reads the CCP register every 2 seconds.  The read itself acts as the
+        heartbeat that prevents the camera from expiring the control-channel
+        privilege.
+
+        Also monitors the CCP value: if the control bit (bit 1) is cleared —
+        indicating that another application has taken over or the camera
+        reset the privilege — sets :attr:`_control_lost` to ``True`` so
+        callers can detect the loss of control.
+
+        Network and protocol errors are silently suppressed; the loop
+        continues until :attr:`_heartbeat_stop` is set by :meth:`disconnect`.
         """
         while not self._heartbeat_stop.wait(2.0):
             try:
