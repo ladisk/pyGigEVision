@@ -8,9 +8,9 @@ pyGigEVision is the protocol foundation.
 
 Public API summary:
 
-* :class:`GVCPClient` — UDP-based camera control: register read/write,
+* :class:`~pyGigEVision.gvcp.GVCPClient` — UDP-based camera control: register read/write,
   bulk memory access, heartbeat keepalive.
-* :exc:`GVCPError` — raised when the camera returns a non-SUCCESS GVCP
+* :exc:`~pyGigEVision.gvcp.GVCPError` — raised when the camera returns a non-SUCCESS GVCP
   status code.
 * :class:`GVSPReceiver` — background UDP receiver that reassembles
   image frames into NumPy arrays.

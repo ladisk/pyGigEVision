@@ -39,7 +39,7 @@ def bootstrap(
 
     Returns
     -------
-    tuple of (GVCPClient, bytes)
+    tuple of (~pyGigEVision.gvcp.GVCPClient, bytes)
         ``(client, xml_bytes)`` where *client* is a connected
         :class:`~pyGigEVision.gvcp.GVCPClient` holding exclusive control
         privilege and *xml_bytes* is the raw GenICam XML.  The caller is
@@ -47,7 +47,7 @@ def bootstrap(
 
     Raises
     ------
-    GVCPError
+    ~pyGigEVision.gvcp.GVCPError
         If taking CCP control or reading the GenICam XML fails.
     OSError
         If the UDP socket cannot be created or bound.

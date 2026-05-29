@@ -84,7 +84,7 @@ def fetch_genicam_xml(client: object) -> tuple[bytes, str]:
 
     Parameters
     ----------
-    client : GVCPClient
+    client : ~pyGigEVision.gvcp.GVCPClient
         An open :class:`~pyGigEVision.gvcp.GVCPClient` with control
         privilege.  Must expose a ``read_mem(addr, size)`` method that
         returns ``bytes``.
