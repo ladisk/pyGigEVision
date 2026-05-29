@@ -1,6 +1,6 @@
 """Bootstrap a camera and save its GenICam XML descriptor.
 
-The GenICam XML describes every register the camera exposes — its
+The GenICam XML describes every register the camera exposes: its
 addresses, types, allowed values, and human-readable names. Vendor
 drivers parse this file to know how to talk to the camera.
 

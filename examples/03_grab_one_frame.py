@@ -11,7 +11,7 @@ This example shows the full protocol-level dance:
 
 Steps 1 and 4 are vendor-agnostic. Steps 2 (which standard SC
 registers to write) and 3 (which vendor-specific command register to
-trigger) require knowing your camera's register layout — typically
+trigger) require knowing your camera's register layout, typically
 discovered from the GenICam XML (see ``02_bootstrap_and_xml.py``).
 
 The placeholder register addresses below must be replaced with the

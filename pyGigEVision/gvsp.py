@@ -3,9 +3,9 @@
 Receives image frames pushed by a camera over UDP as a sequence of
 packets:
 
-* Leader packet — image metadata (dimensions, pixel format, timestamp).
-* Data packets — raw pixel data chunks.
-* Trailer packet — frame complete signal.
+* Leader packet: image metadata (dimensions, pixel format, timestamp).
+* Data packets: raw pixel data chunks.
+* Trailer packet: frame complete signal.
 
 The :class:`GVSPReceiver` runs a background thread that reassembles
 packets into pre-allocated NumPy buffers, detects gaps in packet
@@ -89,7 +89,7 @@ class _FrameBuffer:
     per block ID when its leader packet arrives (or, for data-before-leader
     arrivals, on the first data packet).  The raw image data is stored in a
     pre-allocated :class:`bytearray` so every data packet is written with a
-    single slice assignment — no temporary buffers, no sort step.
+    single slice assignment, with no temporary buffers or sort step.
 
     Parameters
     ----------
@@ -297,7 +297,7 @@ class GVSPReceiver:
 
     Examples
     --------
-    Minimal usage — receive one frame::
+    Minimal usage, receiving one frame::
 
         receiver = GVSPReceiver(local_ip="169.254.0.1", camera_ip="169.254.67.34")
         receiver.start()
@@ -372,7 +372,7 @@ class GVSPReceiver:
     def start(self) -> None:
         """Start the background receiver thread.
 
-        Idempotent — does nothing if the thread is already running.
+        Idempotent. Does nothing if the thread is already running.
 
         Examples
         --------
@@ -493,7 +493,7 @@ class GVSPReceiver:
             try:
                 data, addr = self._sock.recvfrom(65536)
             except TimeoutError:
-                # No packet received — check for gaps and stale frames
+                # No packet received; check for gaps and stale frames
                 self._check_gaps_and_timeouts()
                 continue
             except OSError:
@@ -626,7 +626,7 @@ class GVSPReceiver:
             age = now - buf.created_at
             since_last = now - buf.last_packet_at
 
-            # Frame retention timeout — emit whatever we have
+            # Frame retention timeout: emit whatever we have
             if (
                 since_last > self._frame_retention
                 and buf.leader_received
@@ -636,7 +636,7 @@ class GVSPReceiver:
                 to_remove.append(block_id)
                 continue
 
-            # Real-time gap detection — request resend for missing packets
+            # Real-time gap detection: request resend for missing packets
             if (
                 self.resend_enabled
                 and self._camera_ip
@@ -654,7 +654,7 @@ class GVSPReceiver:
                     self._send_resend_direct(block_id, to_resend)
                     buf._resend_requested.update(to_resend)
 
-            # Hard timeout — drop frame
+            # Hard timeout: drop frame
             if age > self._frame_retention * 5:
                 to_remove.append(block_id)
 

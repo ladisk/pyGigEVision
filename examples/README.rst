@@ -15,7 +15,7 @@ set up correctly.
 
 Boots a camera (control privilege + heartbeat) and saves its GenICam
 XML descriptor to ``camera_descriptor.xml`` in the current directory.
-The XML lists every register the camera exposes — open it in any XML
+The XML lists every register the camera exposes. Open it in any XML
 viewer to learn the register addresses you need for your own driver.
 
 Pass an IP as the first argument to target a specific camera; omit to

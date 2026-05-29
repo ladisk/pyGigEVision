@@ -4,10 +4,10 @@ Protocol overview
 ``pyGigEVision`` implements two complementary UDP protocols from the
 GigE Vision specification:
 
-* **GVCP** — Gigabit Vision Control Protocol. Request-response control
+* **GVCP** (Gigabit Vision Control Protocol): request-response control
   on UDP port 3956. Used for camera discovery, register read/write,
   bulk memory access, and heartbeat keepalive.
-* **GVSP** — Gigabit Vision Streaming Protocol. One-way push streaming
+* **GVSP** (Gigabit Vision Streaming Protocol): one-way push streaming
   on a UDP port the host chooses. The camera sends each frame as a
   Leader packet, a sequence of Data packets, and a Trailer packet.
 
@@ -62,8 +62,8 @@ Check that the camera is on the same subnet as one of your network
 interfaces. On Windows, also verify that the Ethernet adapter profile
 is set to ``Private`` (Public profile blocks inbound UDP by default).
 If a VPN like Tailscale is running, its virtual link-local interface
-may shadow the camera's Ethernet adapter — pass an explicit
-``interface_ip`` to :func:`pyGigEVision.discover`.
+may shadow the camera's Ethernet adapter. In that case, pass an
+explicit ``interface_ip`` to :func:`pyGigEVision.discover`.
 
 **Packets unrecoverable warnings during streaming.**
 Host-side UDP buffer overflows. Try one of:

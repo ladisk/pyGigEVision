@@ -3,12 +3,12 @@ pyGigEVision
 
 |tests| |docs| |license| |python|
 
-Pure-Python implementation of the GigE Vision protocol — GVCP (control)
-and GVSP (streaming) — for machine vision cameras. ``pyGigEVision`` is
-the foundation other vendor-specific GigE Vision camera drivers can
-build on top of. It exposes the protocol primitives — discovery,
-control register access, streaming reception, and GenICam descriptor
-download — without bundling any vendor-specific behaviour.
+Pure-Python implementation of the GigE Vision protocol, covering GVCP
+(control) and GVSP (streaming), for machine vision cameras.
+``pyGigEVision`` is the foundation other vendor-specific GigE Vision
+camera drivers can build on top of. It exposes the protocol primitives
+(discovery, control register access, streaming reception, and GenICam
+descriptor download) without bundling any vendor-specific behaviour.
 
 The package is pure Python: no compiled extensions, no vendor SDKs,
 no GenTL producers required.

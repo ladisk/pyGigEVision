@@ -72,13 +72,12 @@ What pyGigEVision is and is not
 
 ``pyGigEVision`` implements the **protocol layer** defined by the GigE
 Vision specification. It does not know which register addresses your
-camera uses for ``Width`` or ``ExposureTime`` — those are
+camera uses for ``Width`` or ``ExposureTime``; those are
 vendor-specific and discovered from the camera's GenICam XML.
 
 For a turn-key driver for a specific camera, you would either:
 
-* Use a vendor-specific package built on top of ``pyGigEVision``
-  (these exist in the Ladisk ecosystem; their list will grow over time).
+* Use a vendor-specific package built on top of ``pyGigEVision``.
 * Write your own thin vendor layer that parses the GenICam XML and
   wraps the relevant registers. See the :doc:`examples` page for a
   starting point.

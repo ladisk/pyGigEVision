@@ -1,25 +1,25 @@
-"""pyGigEVision — pure-Python GigE Vision protocol library.
+"""pyGigEVision: pure-Python GigE Vision protocol library.
 
 Provides GVCP (control channel), GVSP (image streaming), GigE Vision
 standard register constants, and helpers for fetching the GenICam XML
 descriptor from a connected camera.  Vendor-specific drivers (register
-maps, calibration, image-format quirks) are built on top —
-pyGigEVision is the protocol foundation.
+maps, calibration, image-format quirks) are built on top of this
+protocol foundation.
 
 Public API summary:
 
-* :class:`~pyGigEVision.gvcp.GVCPClient` — UDP-based camera control: register read/write,
+* :class:`~pyGigEVision.gvcp.GVCPClient`: UDP-based camera control: register read/write,
   bulk memory access, heartbeat keepalive.
-* :exc:`~pyGigEVision.gvcp.GVCPError` — raised when the camera returns a non-SUCCESS GVCP
+* :exc:`~pyGigEVision.gvcp.GVCPError`: raised when the camera returns a non-SUCCESS GVCP
   status code.
-* :class:`GVSPReceiver` — background UDP receiver that reassembles
+* :class:`GVSPReceiver`: background UDP receiver that reassembles
   image frames into NumPy arrays.
-* :func:`discover` — broadcast discovery to find cameras on the network.
-* :func:`bootstrap` — single-call convenience: open GVCP, take CCP
+* :func:`discover`: broadcast discovery to find cameras on the network.
+* :func:`bootstrap`: single-call convenience: open GVCP, take CCP
   control, fetch GenICam XML.
-* :func:`fetch_genicam_xml` — download and decompress the GenICam XML
+* :func:`fetch_genicam_xml`: download and decompress the GenICam XML
   descriptor from a connected camera.
-* :func:`parse_first_url` — parse the ``REG_FIRST_URL`` bytes into
+* :func:`parse_first_url`: parse the ``REG_FIRST_URL`` bytes into
   ``(filename, addr, size)``.
 
 Quickstart::
@@ -46,7 +46,7 @@ from .gvsp import GVSPReceiver
 # submodule object (e.g., for `unittest.mock.patch.object`), use
 # `importlib.import_module("pyGigEVision.bootstrap")`.
 
-# `discover` is a @staticmethod on GVCPClient — alias to the package level
+# `discover` is a @staticmethod on GVCPClient; aliased to the package level
 # so users can `from pyGigEVision import discover`.
 discover = GVCPClient.discover
 

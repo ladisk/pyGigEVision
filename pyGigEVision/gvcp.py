@@ -370,9 +370,9 @@ class GVCPClient:
             self._sock.bind((self.local_ip, 0))
         self._sock.settimeout(self.timeout)
 
-        # Take control — poll on ACCESS_DENIED until old session's
+        # Take control: poll on ACCESS_DENIED until old session's
         # heartbeat times out.
-        max_wait = 15.0  # seconds — generous upper bound
+        max_wait = 15.0  # seconds; generous upper bound
         deadline = time.monotonic() + max_wait
         attempt = 0
         try:
@@ -390,7 +390,7 @@ class GVCPClient:
                         if time.monotonic() >= deadline:
                             raise GVCPError(
                                 "Could not take CCP control after "
-                                f"{max_wait:.0f}s — another application may "
+                                f"{max_wait:.0f}s; another application may "
                                 "be actively connected",
                                 0x8006,
                             ) from e
@@ -673,7 +673,7 @@ class GVCPClient:
                         deadline = min(new_deadline, hard_deadline)
                     continue
 
-                # Stale ACK from a previous command — discard
+                # Stale ACK from a previous command; discard
                 if ack_id != req_id:
                     continue
 
@@ -752,9 +752,9 @@ class GVCPClient:
         heartbeat that prevents the camera from expiring the control-channel
         privilege.
 
-        Also monitors the CCP value: if the control bit (bit 1) is cleared —
-        indicating that another application has taken over or the camera
-        reset the privilege — sets :attr:`_control_lost` to ``True`` so
+        Also monitors the CCP value: if the control bit (bit 1) is cleared
+        (indicating that another application has taken over or the camera
+        reset the privilege), sets :attr:`_control_lost` to ``True`` so
         callers can detect the loss of control.
 
         Network and protocol errors are silently suppressed; the loop
