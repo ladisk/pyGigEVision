@@ -1,22 +1,35 @@
+"""GigE Vision Streaming Protocol (GVSP) receiver.
+
+Receives image frames pushed by a camera over UDP as a sequence of
+packets:
+
+* Leader packet — image metadata (dimensions, pixel format, timestamp).
+* Data packets — raw pixel data chunks.
+* Trailer packet — frame complete signal.
+
+The :class:`GVSPReceiver` runs a background thread that reassembles
+packets into pre-allocated NumPy buffers, detects gaps in packet
+sequence numbers, requests resends directly via the receive socket
+(bypassing the GVCP control channel for lower latency), and pushes
+completed frames onto a thread-safe queue.
+
+Byte order is configurable via the ``byteswap`` constructor parameter
+(set ``True`` when the camera sends data in the opposite endianness
+from the host; vendor-dependent).
+
+Notes
+-----
+Implements aravis-inspired patterns: pre-allocated frame buffers
+(direct offset writes, no dict-and-sort assembly), real-time gap
+detection on every received packet, three-tier timeouts (initial gap
+grace, resend interval, frame retention).
+
+See Also
+--------
+pyGigEVision.gvcp : The control counterpart (GVCP).
 """
-GigE Vision Streaming Protocol (GVSP) receiver.
 
-Receives image frames streamed from a GigE Vision camera over UDP.
-The camera sends frames as a sequence of packets:
-  - Leader packet: image metadata (dimensions, pixel format, timestamp)
-  - Data packets: raw pixel data chunks
-  - Trailer packet: signals frame complete
-
-This module is generic — it works with any GigE Vision camera.
-Byte order is configurable (byte order varies by vendor — set the appropriate
-value at construction).
-
-Implements aravis-inspired improvements:
-  - Pre-allocated frame buffers (direct offset writes, no dict+sort)
-  - Real-time gap detection on every received packet
-  - Packet resend sent directly from the stream socket (not GVCP)
-  - Three-tier timeouts: initial gap grace, resend interval, frame retention
-"""
+from __future__ import annotations
 
 import contextlib
 import logging
@@ -70,9 +83,21 @@ _GVCP_CMD_PACKETRESEND = 0x0040
 
 
 class _FrameBuffer:
-    """Accumulates packets for a single frame using a pre-allocated buffer."""
+    """Accumulate packets for a single in-flight frame.
 
-    def __init__(self, block_id: int):
+    Internal to :mod:`pyGigEVision.gvsp`.  One ``_FrameBuffer`` is created
+    per block ID when its leader packet arrives (or, for data-before-leader
+    arrivals, on the first data packet).  The raw image data is stored in a
+    pre-allocated :class:`bytearray` so every data packet is written with a
+    single slice assignment — no temporary buffers, no sort step.
+
+    Parameters
+    ----------
+    block_id : int
+        GVSP block identifier for this frame.
+    """
+
+    def __init__(self, block_id: int) -> None:
         self.block_id = block_id
         self.timestamp = 0
         self.pixel_format = 0
@@ -95,8 +120,15 @@ class _FrameBuffer:
         # Resend tracking per-packet
         self._resend_requested: set[int] = set()
 
-    def setup_buffer(self, packet_data_size: int):
-        """Allocate frame buffer once dimensions are known."""
+    def setup_buffer(self, packet_data_size: int) -> None:
+        """Allocate the frame buffer once image dimensions are known.
+
+        Parameters
+        ----------
+        packet_data_size : int
+            Expected data payload size per packet (bytes), used to compute
+            the packet count and per-packet buffer offsets.
+        """
         if self.width <= 0 or self.height <= 0:
             return
 
@@ -116,7 +148,7 @@ class _FrameBuffer:
         self._last_contiguous = 0
         self._received_count = 0
 
-    def write_packet(self, packet_id: int, payload: bytes):
+    def write_packet(self, packet_id: int, payload: bytes) -> None:
         """Write a data packet directly to the correct buffer offset."""
         self.last_packet_at = time.monotonic()
 
@@ -152,6 +184,7 @@ class _FrameBuffer:
         return [i for i in range(1, self.expected_packets + 1) if not self._received[i]]
 
     def is_complete(self) -> bool:
+        """Return ``True`` when leader, trailer, and all data packets are received."""
         if not self.leader_received or not self.trailer_received:
             return False
         if self.expected_packets > 0:
@@ -159,7 +192,21 @@ class _FrameBuffer:
         return True
 
     def assemble(self, byteswap: bool = False) -> np.ndarray | None:
-        """Assemble the frame from the pre-allocated buffer."""
+        """Assemble the frame from the pre-allocated buffer.
+
+        Parameters
+        ----------
+        byteswap : bool, optional
+            Swap the byte order of each pixel after assembly.  Default is
+            ``False``.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            2-D array of shape ``(height, width)`` with the appropriate
+            ``dtype`` from :data:`PIXEL_DTYPE`, or ``None`` if the leader
+            has not been received or the dimensions are invalid.
+        """
         if not self.leader_received:
             return None
 
@@ -191,19 +238,82 @@ class _FrameBuffer:
 
 
 class GVSPReceiver:
-    """Receives GVSP image frames on a UDP socket.
+    """Receive GVSP image frames on a UDP socket.
 
-    Args:
-        local_ip: Local IP to bind to.
-        local_port: Local UDP port (0 = auto-assign).
-        max_queue: Max completed frames to buffer.
-        gvcp_client: Optional GVCPClient (used for camera_ip only).
-        packet_size: Network packet size (default 1500 = standard MTU).
-        byteswap: Swap pixel byte order after reception (vendor-dependent).
-        camera_ip: Camera IP for direct resend (auto-detected from gvcp_client).
-        initial_packet_timeout: Grace period before first resend (seconds).
-        packet_timeout: Timeout between resend attempts (seconds).
-        frame_retention: Max time to keep an incomplete frame (seconds).
+    Binds a UDP socket on the given *local_ip*/*local_port*, starts a
+    background thread that reassembles GVSP packets into NumPy arrays, and
+    exposes a thread-safe queue via :meth:`get_frame` / :meth:`get_frame_with_info`.
+
+    Packet resends are sent directly from the stream socket to the camera's
+    GVCP port (3956), bypassing any :class:`~pyGigEVision.gvcp.GVCPClient`
+    lock, which keeps the control channel free for register reads during
+    acquisition.
+
+    Parameters
+    ----------
+    local_ip : str, optional
+        Local interface IPv4 address to bind to, e.g. ``"169.254.0.1"``.
+        Empty string (default) lets the OS choose.
+    local_port : int, optional
+        Local UDP port to bind to.  ``0`` (default) asks the OS to
+        assign a free port; read back via the :attr:`port` property.
+    max_queue : int, optional
+        Maximum number of completed frames to hold in the internal queue
+        before the oldest is discarded.  Default is ``30``.
+    gvcp_client : GVCPClient or None, optional
+        If provided, ``camera_ip`` is read from ``gvcp_client.camera_ip``
+        when *camera_ip* is empty.  The client is not otherwise used.
+    packet_size : int, optional
+        Expected network packet size in bytes (Ethernet MTU).  The data
+        payload per packet is ``packet_size - 8``.  Default is ``1500``
+        (standard Ethernet MTU).
+    byteswap : bool, optional
+        Swap the byte order of each pixel after assembly.  Set to ``True``
+        when the camera sends data in the opposite endianness from the host.
+        Default is ``False``.
+    camera_ip : str, optional
+        IPv4 address of the camera, used as the destination for direct
+        resend requests.  Falls back to ``gvcp_client.camera_ip`` when
+        *gvcp_client* is supplied.  Leave empty to disable resends.
+    initial_packet_timeout : float, optional
+        Grace period in seconds before the first resend request is issued
+        for a gap.  Default is ``0.005``.
+    packet_timeout : float, optional
+        Interval in seconds between successive resend attempts for the
+        same gap.  Default is ``0.020``.
+    frame_retention : float, optional
+        Maximum time in seconds to keep an incomplete frame before emitting
+        it with whatever data arrived.  Default is ``0.200``.
+
+    Notes
+    -----
+    The constructor binds the socket immediately.  Call :meth:`start` to
+    launch the background receiver thread.
+
+    The receiver is not thread-safe for concurrent calls to :meth:`start`,
+    :meth:`stop`, or :meth:`close`; those should be called from a single
+    controlling thread.  :meth:`get_frame` and :meth:`get_frame_with_info`
+    are safe to call from any thread.
+
+    Examples
+    --------
+    Minimal usage — receive one frame::
+
+        receiver = GVSPReceiver(local_ip="169.254.0.1", camera_ip="169.254.67.34")
+        receiver.start()
+        # ... configure camera to stream to receiver.port ...
+        frame = receiver.get_frame(timeout=5.0)
+        receiver.stop()
+
+    Context-manager style (using :meth:`close` after ``stop``)::
+
+        receiver = GVSPReceiver(local_ip="169.254.0.1")
+        receiver.start()
+        try:
+            frame, info = receiver.get_frame_with_info(timeout=10.0)
+        finally:
+            receiver.stop()
+            receiver.close()
     """
 
     def __init__(
@@ -211,14 +321,14 @@ class GVSPReceiver:
         local_ip: str = "",
         local_port: int = 0,
         max_queue: int = 30,
-        gvcp_client=None,
+        gvcp_client: object | None = None,
         packet_size: int = 1500,
         byteswap: bool = False,
         camera_ip: str = "",
         initial_packet_timeout: float = 0.005,
         packet_timeout: float = 0.020,
         frame_retention: float = 0.200,
-    ):
+    ) -> None:
         self.local_ip = local_ip
         self.byteswap = byteswap
         self._gvcp = gvcp_client
@@ -237,7 +347,7 @@ class GVSPReceiver:
         self._sock.settimeout(0.05)  # short timeout for responsive gap checking
 
         self._port = self._sock.getsockname()[1]
-        self._frame_queue: Queue = Queue(maxsize=max_queue)
+        self._frame_queue: Queue[tuple[np.ndarray, dict]] = Queue(maxsize=max_queue)
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._frame_buffers: dict[int, _FrameBuffer] = {}
@@ -249,38 +359,127 @@ class GVSPReceiver:
 
     @property
     def port(self) -> int:
-        """UDP port the receiver is bound to."""
+        """int : UDP port the receiver is bound to.
+
+        Read the assigned port after construction, especially when
+        *local_port* was ``0`` (OS-assigned)::
+
+            receiver = GVSPReceiver()
+            print(receiver.port)  # e.g. 49152
+        """
         return self._port
 
-    def start(self):
-        """Start the receiver thread."""
+    def start(self) -> None:
+        """Start the background receiver thread.
+
+        Idempotent — does nothing if the thread is already running.
+
+        Examples
+        --------
+        ::
+
+            receiver = GVSPReceiver(local_ip="169.254.0.1")
+            receiver.start()
+            # ... acquire frames ...
+            receiver.stop()
+        """
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._receive_loop, daemon=True)
         self._thread.start()
 
-    def stop(self):
-        """Stop the receiver thread."""
+    def stop(self) -> None:
+        """Stop the background receiver thread.
+
+        Signals the thread to exit and waits up to 5 seconds for it to
+        finish.  Clears any in-flight frame buffers.  The socket is kept
+        open; call :meth:`close` to release it.
+        """
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5.0)
         self._frame_buffers.clear()
 
-    def close(self):
-        """Stop and close the socket."""
+    def close(self) -> None:
+        """Stop the receiver and close the UDP socket.
+
+        After calling ``close``, the receiver must not be used again.
+        """
         self.stop()
         self._sock.close()
 
     def get_frame(self, timeout: float = 5.0) -> np.ndarray | None:
-        """Block until a frame is available, return as numpy array."""
+        """Block until a frame is available and return it as a NumPy array.
+
+        Discards the accompanying metadata.  Use :meth:`get_frame_with_info`
+        to retrieve metadata alongside the image.
+
+        Parameters
+        ----------
+        timeout : float, optional
+            Maximum time in seconds to wait for a frame.  Default is ``5.0``.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            2-D array of shape ``(height, width)`` with dtype from
+            :data:`PIXEL_DTYPE`, or ``None`` if no frame arrived within
+            *timeout*.
+
+        Examples
+        --------
+        ::
+
+            receiver.start()
+            frame = receiver.get_frame(timeout=2.0)
+            if frame is not None:
+                print(frame.shape, frame.dtype)
+        """
         result = self.get_frame_with_info(timeout)
         if result is None:
             return None
         return result[0]
 
     def get_frame_with_info(self, timeout: float = 5.0) -> tuple[np.ndarray, dict] | None:
-        """Block until a frame is available, return (array, metadata)."""
+        """Block until a frame is available and return it with metadata.
+
+        Parameters
+        ----------
+        timeout : float, optional
+            Maximum time in seconds to wait for a frame.  Default is ``5.0``.
+
+        Returns
+        -------
+        tuple of (numpy.ndarray, dict) or None
+            ``(frame, info)`` where *frame* is a 2-D NumPy array and *info*
+            is a dict with the following keys:
+
+            ``"block_id"``
+                GVSP block identifier (int).
+            ``"timestamp"``
+                Camera timestamp from the leader packet (int, camera ticks).
+            ``"pixel_format"``
+                GenICam PFNC pixel format code, e.g. :data:`PIXEL_MONO16` (int).
+            ``"width"``
+                Image width in pixels (int).
+            ``"height"``
+                Image height in pixels (int).
+            ``"missing_packets"``
+                Number of data packets that were not recovered before the
+                frame was emitted (int; ``0`` for perfect frames).
+
+            Returns ``None`` if no frame arrived within *timeout*.
+
+        Examples
+        --------
+        ::
+
+            result = receiver.get_frame_with_info(timeout=3.0)
+            if result is not None:
+                frame, info = result
+                print(info["block_id"], info["missing_packets"])
+        """
         try:
             return self._frame_queue.get(timeout=timeout)
         except Empty:
@@ -288,7 +487,7 @@ class GVSPReceiver:
 
     # --- Internal ---
 
-    def _receive_loop(self):
+    def _receive_loop(self) -> None:
         """Main receiver loop with real-time gap detection."""
         while not self._stop_event.is_set():
             try:
@@ -308,7 +507,7 @@ class GVSPReceiver:
             # Check gaps on every packet (aravis pattern)
             self._check_gaps_and_timeouts()
 
-    def _parse_packet(self, data: bytes):
+    def _parse_packet(self, data: bytes) -> None:
         """Parse a single GVSP packet."""
         format_byte = data[4]
         # Bit 7 of byte 4 = bit 31 of packet_infos = extended ID flag
@@ -340,7 +539,7 @@ class GVSPReceiver:
         elif packet_type == PACKET_TRAILER:
             self._handle_trailer(block_id, payload)
 
-    def _handle_leader(self, block_id: int, payload: bytes):
+    def _handle_leader(self, block_id: int, payload: bytes) -> None:
         """Parse leader packet and pre-allocate frame buffer."""
         buf = _FrameBuffer(block_id)
 
@@ -357,7 +556,7 @@ class GVSPReceiver:
 
     _MAX_CONCURRENT_FRAMES = 100
 
-    def _handle_data(self, block_id: int, packet_id: int, payload: bytes):
+    def _handle_data(self, block_id: int, packet_id: int, payload: bytes) -> None:
         """Write data packet directly to pre-allocated frame buffer."""
         if block_id not in self._frame_buffers:
             if len(self._frame_buffers) >= self._MAX_CONCURRENT_FRAMES:
@@ -366,7 +565,7 @@ class GVSPReceiver:
             self._frame_buffers[block_id] = _FrameBuffer(block_id)
         self._frame_buffers[block_id].write_packet(packet_id, payload)
 
-    def _handle_trailer(self, block_id: int, payload: bytes):
+    def _handle_trailer(self, block_id: int, payload: bytes) -> None:
         """Handle trailer packet, emit completed frame."""
         if block_id not in self._frame_buffers:
             return
@@ -392,7 +591,7 @@ class GVSPReceiver:
         # Assemble and emit
         self._emit_frame(buf)
 
-    def _emit_frame(self, buf: _FrameBuffer):
+    def _emit_frame(self, buf: _FrameBuffer) -> None:
         """Assemble frame and put it on the output queue."""
         frame = buf.assemble(byteswap=self.byteswap)
         if frame is not None:
@@ -413,7 +612,7 @@ class GVSPReceiver:
 
         self._frame_buffers.pop(buf.block_id, None)
 
-    def _check_gaps_and_timeouts(self):
+    def _check_gaps_and_timeouts(self) -> None:
         """Real-time gap detection and frame retention timeout.
 
         Called on every received packet and on socket timeouts.
@@ -462,7 +661,7 @@ class GVSPReceiver:
         for bid in to_remove:
             self._frame_buffers.pop(bid, None)
 
-    def _send_resend_direct(self, block_id: int, packet_ids: list[int]):
+    def _send_resend_direct(self, block_id: int, packet_ids: list[int]) -> None:
         """Send PACKETRESEND directly from the stream socket.
 
         Sends to camera's GVCP port (3956) from the stream socket,
