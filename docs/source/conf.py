@@ -13,7 +13,6 @@ project = "pyGigEVision"
 author = "Jaša Šonc, Janko Slavič, Lorenzo Capponi"
 copyright = "2026, Jaša Šonc and Ladisk group, University of Ljubljana"
 release = "0.1.1"
-
 # -- General configuration ---------------------------------------------------
 extensions = [
     "sphinx.ext.autodoc",
