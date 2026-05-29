@@ -1,10 +1,18 @@
 """GigE Vision standard register addresses.
 
 Defined by the GigE Vision specification — same on every compliant
-camera regardless of vendor. Vendor-specific registers (Width, Height,
-ExposureTime, etc.) live in each vendor driver, derived from the
-camera's GenICam XML.
+camera regardless of vendor.  These addresses are normative: the spec
+requires all GigE Vision devices to implement them at the given offsets
+in the bootstrap register map (starting at address 0x0000).  Register
+names and semantics follow the GigE Vision 1.x/2.x bootstrap register
+table.
+
+Vendor-specific registers (Width, Height, ExposureTime, and so on) live
+in each vendor driver and are derived from the camera's GenICam XML
+descriptor, not from this module.
 """
+
+from __future__ import annotations
 
 # ============================================================
 # Bootstrap registers (GigE Vision spec section: device control)

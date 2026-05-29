@@ -1,16 +1,25 @@
 """GenICam XML descriptor download helper.
 
 Every GigE Vision camera stores its register description XML in on-board
-memory. The location URL is at bootstrap register 0x0200 (REG_FIRST_URL)
-and looks like::
+memory.  The location URL is at bootstrap register 0x0200
+(``REG_FIRST_URL``) and follows the format::
 
     Local:cameralib.xml;0xADDR;0xSIZE
 
-This module reads the URL, downloads the bytes, and decompresses if the
-descriptor is zipped. Parsing the XML itself is left to the vendor driver
-(register naming conventions differ enough across vendors that a generic
-parser is not worth the abstraction).
+This module reads the URL, downloads the bytes, and decompresses the
+descriptor if the camera stores it as a ZIP archive (common for larger
+XML files).
+
+Notes
+-----
+Parsing the XML itself is left to the vendor driver.  Register naming
+conventions differ enough across vendors that a generic parser would add
+more abstraction than value.  Vendor drivers receive the raw XML bytes
+from :func:`fetch_genicam_xml` and interpret them using their own
+register maps.
 """
+
+from __future__ import annotations
 
 import io
 import logging
@@ -21,17 +30,40 @@ from .standard import REG_FIRST_URL
 logger = logging.getLogger(__name__)
 
 
-def parse_first_url(url_bytes):
+def parse_first_url(url_bytes: bytes) -> tuple[str, int, int]:
     """Parse the bytes read from REG_FIRST_URL into (filename, addr, size).
 
-    Args:
-        url_bytes: Raw bytes from ``client.read_mem(REG_FIRST_URL, 512)``.
+    Parameters
+    ----------
+    url_bytes : bytes
+        Raw bytes from ``client.read_mem(REG_FIRST_URL, 512)``.  The
+        string is null-terminated; everything after the first null byte
+        is ignored.
 
-    Returns:
-        Tuple of (filename: str, addr: int, size: int).
+    Returns
+    -------
+    tuple of (str, int, int)
+        ``(filename, addr, size)`` where *filename* is the XML or ZIP
+        entry name (e.g. ``"cameralib.xml"``), *addr* is the start
+        address of the descriptor in camera memory, and *size* is the
+        byte length.
 
-    Raises:
-        ValueError: If the URL string cannot be parsed.
+    Raises
+    ------
+    ValueError
+        If the URL string cannot be split into at least three
+        semicolon-separated parts (malformed descriptor).
+
+    Examples
+    --------
+    >>> url = b"Local:cameralib.xml;0x10000;0x4000\\x00"
+    >>> filename, addr, size = parse_first_url(url)
+    >>> filename
+    'cameralib.xml'
+    >>> hex(addr)
+    '0x10000'
+    >>> size
+    16384
     """
     url = url_bytes.split(b"\x00", 1)[0].decode("ascii")
     parts = url.split(";")
@@ -43,16 +75,38 @@ def parse_first_url(url_bytes):
     return filename, addr, size
 
 
-def fetch_genicam_xml(client):
+def fetch_genicam_xml(client: object) -> tuple[bytes, str]:
     """Download the GenICam XML descriptor from a connected camera.
 
-    Args:
-        client: An open ``GVCPClient`` with control privilege.
+    Reads the ``REG_FIRST_URL`` register to locate the descriptor, fetches
+    the raw bytes, and decompresses them if the camera stored the XML as a
+    ZIP archive.
 
-    Returns:
-        Tuple of (xml_bytes: bytes, filename: str). If the on-camera
-        descriptor was zipped, ``xml_bytes`` is the decompressed XML and
-        ``filename`` is the .xml entry name from the zip.
+    Parameters
+    ----------
+    client : GVCPClient
+        An open :class:`~pyGigEVision.gvcp.GVCPClient` with control
+        privilege.  Must expose a ``read_mem(addr, size)`` method that
+        returns ``bytes``.
+
+    Returns
+    -------
+    tuple of (bytes, str)
+        ``(xml_bytes, filename)`` where *xml_bytes* is the raw (and, if
+        necessary, decompressed) GenICam XML, and *filename* is the name
+        of the XML entry (from the zip archive if the descriptor was
+        compressed, otherwise the filename from ``REG_FIRST_URL``).
+
+    Examples
+    --------
+    Typical usage with a connected client::
+
+        from pyGigEVision import GVCPClient
+        from pyGigEVision.genicam import fetch_genicam_xml
+
+        with GVCPClient("169.254.1.10") as client:
+            xml_bytes, filename = fetch_genicam_xml(client)
+            print(f"Received {len(xml_bytes)} bytes from '{filename}'")
     """
     url_bytes = client.read_mem(REG_FIRST_URL, 512)
     filename, addr, size = parse_first_url(url_bytes)

@@ -2,9 +2,11 @@
 
 Performs the standard boot sequence shared by every GigE Vision driver:
 acquire control privilege, start heartbeat keepalive, fetch the GenICam
-XML descriptor. Vendor drivers use this to skip boilerplate, or roll
-their own if they need finer control.
+XML descriptor.  Vendor drivers use this to skip boilerplate, or roll
+their own if they need finer control over each step.
 """
+
+from __future__ import annotations
 
 from .genicam import fetch_genicam_xml
 from .gvcp import GVCPClient
@@ -17,17 +19,45 @@ _CCP_EXCLUSIVE = 0x00000002
 _DEFAULT_HEARTBEAT_MS = 3000
 
 
-def bootstrap(camera_ip, heartbeat_ms=_DEFAULT_HEARTBEAT_MS):
-    """Connect to a camera, take control, fetch its GenICam XML.
+def bootstrap(
+    camera_ip: str, heartbeat_ms: int = _DEFAULT_HEARTBEAT_MS
+) -> tuple[GVCPClient, bytes]:
+    """Connect to a camera, take control, and fetch its GenICam XML.
 
-    Args:
-        camera_ip: IPv4 address of the target camera.
-        heartbeat_ms: Heartbeat timeout to write to the camera, in ms.
+    Performs the three-step standard boot sequence: open the GVCP socket,
+    write exclusive ``CCP`` control privilege, set the heartbeat timeout,
+    and fetch the GenICam XML descriptor via :func:`~pyGigEVision.genicam.fetch_genicam_xml`.
 
-    Returns:
-        Tuple of (client: GVCPClient, xml_bytes: bytes). The client is
-        connected and holds exclusive control privilege; the caller is
-        responsible for ``client.close()`` when done.
+    Parameters
+    ----------
+    camera_ip : str
+        IPv4 address of the target camera, e.g. ``"169.254.1.10"``.
+    heartbeat_ms : int, optional
+        Heartbeat timeout to write to the camera's
+        ``REG_HEARTBEAT_TIMEOUT`` register, in milliseconds.
+        Default is ``3000`` (3 seconds).
+
+    Returns
+    -------
+    tuple of (GVCPClient, bytes)
+        ``(client, xml_bytes)`` where *client* is a connected
+        :class:`~pyGigEVision.gvcp.GVCPClient` holding exclusive control
+        privilege and *xml_bytes* is the raw GenICam XML.  The caller is
+        responsible for calling ``client.disconnect()`` when done.
+
+    Raises
+    ------
+    GVCPError
+        If taking CCP control or reading the GenICam XML fails.
+    OSError
+        If the UDP socket cannot be created or bound.
+
+    Examples
+    --------
+    >>> from pyGigEVision import bootstrap
+    >>> client, xml = bootstrap("169.254.1.10")
+    >>> print(f"Got {len(xml)} bytes of GenICam XML")
+    >>> client.disconnect()
     """
     client = GVCPClient(camera_ip)
     client.connect()
