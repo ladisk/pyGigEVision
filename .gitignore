@@ -26,3 +26,6 @@ ENV/
 *.swo
 .DS_Store
 Thumbs.db
+
+# Sphinx build output
+docs/build/
