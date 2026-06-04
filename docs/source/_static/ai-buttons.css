@@ -1,0 +1,32 @@
+/* AI-assistant dropdown in the article header toolbar.
+   Matches the existing .dropdown-download-buttons style so the icon blends
+   in with the GitHub / download / fullscreen / theme-switch group on the right. */
+
+.dropdown-ai-buttons .dropdown-toggle {
+    background: transparent;
+    border: none;
+    padding: 0.25rem 0.5rem;
+}
+
+.dropdown-ai-buttons .dropdown-toggle::after {
+    display: none;
+}
+
+.dropdown-ai-buttons .dropdown-toggle i {
+    font-size: 1.1rem;
+}
+
+.dropdown-ai-buttons .dropdown-menu .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.dropdown-ai-buttons .dropdown-item.copied {
+    color: #ffffff;
+    background-color: #40a020;
+}
+
+.dropdown-ai-buttons .dropdown-item.copied .btn__icon-container i {
+    color: #ffffff;
+}

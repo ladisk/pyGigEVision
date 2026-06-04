@@ -4,6 +4,11 @@ build:
   os: ubuntu-22.04
   tools:
     python: "3.11"
+  jobs:
+    post_build:
+      # Build the Markdown twin, convert admonitions, copy the .md files next
+      # to the HTML, and rewrite the llms.txt links to point at them.
+      - python docs/rtd_postbuild.py
 
 python:
   install:
