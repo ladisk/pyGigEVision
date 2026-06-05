@@ -137,3 +137,8 @@ def test_discover_sends_global_and_subnet_broadcasts(monkeypatch):
     gvcp_mod.GVCPClient.discover(timeout=0.1)
     assert "255.255.255.255" in sent_targets
     assert "192.168.5.255" in sent_targets
+
+
+def test_parse_discovery_ack_includes_mac():
+    cam = _parse_discovery_ack(_standard_ack(mac=b"\xaa\xbb\xcc\xdd\xee\xff"), "1.2.3.4")
+    assert cam["mac"] == "aa:bb:cc:dd:ee:ff"

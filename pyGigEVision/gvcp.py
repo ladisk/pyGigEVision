@@ -155,10 +155,12 @@ def _parse_discovery_ack(data: bytes, src_ip: str) -> dict | None:
     mfr_ext = _str(72, 32)
     mfr_std = _str(48, 32)
     spec_version = f"{struct.unpack('>H', payload[0:2])[0]}.{struct.unpack('>H', payload[2:4])[0]}"
+    mac = ":".join(f"{b:02x}" for b in payload[10:16])
     if mfr_ext and not mfr_std:
         return {
             "ip": src_ip,
             "spec_version": spec_version,
+            "mac": mac,
             "manufacturer": mfr_ext,
             "model": _str(104, 32),
             "device_version": _str(136, 32),
@@ -169,6 +171,7 @@ def _parse_discovery_ack(data: bytes, src_ip: str) -> dict | None:
     return {
         "ip": src_ip,
         "spec_version": spec_version,
+        "mac": mac,
         "manufacturer": mfr_std,
         "model": _str(80, 32),
         "device_version": _str(112, 32),
