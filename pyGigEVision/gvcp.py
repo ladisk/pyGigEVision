@@ -48,6 +48,7 @@ FLAG_BROADCAST = 0x11
 
 # Commands
 CMD_DISCOVERY = 0x0002
+CMD_FORCEIP = 0x0004
 CMD_READREG = 0x0080
 CMD_WRITEREG = 0x0082
 CMD_READMEM = 0x0084
@@ -412,6 +413,52 @@ class GVCPClient:
         finally:
             for sock in socks:
                 sock.close()
+
+    @staticmethod
+    def force_ip(mac, ip: str, mask: str, gateway: str = "0.0.0.0", timeout: float = 2.0) -> None:
+        """Broadcast a GVCP FORCEIP command to assign an IP to a camera by MAC.
+
+        Re-homes a camera that is on the wrong subnet (or fell back to
+        link-local) without touching host NIC configuration. The camera
+        reboots its IP stack, so no ACK is expected.
+
+        Parameters
+        ----------
+        mac : str or bytes
+            Target camera MAC, as ``"aa:bb:cc:dd:ee:ff"`` or 6 raw bytes.
+        ip, mask : str
+            New IPv4 address and subnet mask for the camera.
+        gateway : str, optional
+            Default gateway. Default ``"0.0.0.0"`` (none).
+        timeout : float, optional
+            Reserved for symmetry; the command is fire-and-forget.
+
+        HARDWARE-GATED: the FORCEIP payload layout (issue #10 table) and the
+        camera's reboot behavior are validated by the provisioning acceptance
+        script, not by hardware in unit tests.
+        """
+        if isinstance(mac, str):
+            mac_bytes = bytes.fromhex(mac.replace(":", "").replace("-", ""))
+        else:
+            mac_bytes = bytes(mac)
+        if len(mac_bytes) != 6:
+            raise ValueError(f"MAC must be 6 bytes, got {len(mac_bytes)}")
+
+        payload = bytearray(64)
+        payload[2:8] = mac_bytes
+        payload[24:28] = socket.inet_aton(ip)
+        payload[44:48] = socket.inet_aton(mask)
+        payload[60:64] = socket.inet_aton(gateway)
+        pkt = struct.pack(">BBHHH", GVCP_KEY, FLAG_BROADCAST, CMD_FORCEIP, len(payload), 1) + bytes(
+            payload
+        )
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.sendto(pkt, ("255.255.255.255", GVCP_PORT))
+        finally:
+            sock.close()
 
     # --- Connection ---
 
