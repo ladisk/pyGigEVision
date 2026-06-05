@@ -29,6 +29,7 @@ pyGigEVision.bootstrap : Convenience helper to perform the standard
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import socket
 import struct
 import threading
@@ -85,6 +86,95 @@ def _enumerate_interfaces() -> list[tuple[str, str]]:
             if a.family == socket.AF_INET and a.address and not a.address.startswith("127."):
                 out.append((a.address, a.netmask or "255.255.255.0"))
     return out
+
+
+def _subnet_broadcasts_for(ip: str, netmask: str | None) -> list[str]:
+    """Return broadcast destinations for an interface: global plus directed.
+
+    Parameters
+    ----------
+    ip : str
+        IPv4 address of the local interface.
+    netmask : str or None
+        Subnet mask string (e.g. ``"255.255.255.0"``).  When ``None``, a
+        ``/16`` subnet is assumed and the directed broadcast is derived from
+        the first two octets of *ip*.
+
+    Returns
+    -------
+    list of str
+        Always contains ``"255.255.255.255"``; additionally contains the
+        directed subnet broadcast address derived from *ip* and *netmask*.
+    """
+    targets = ["255.255.255.255"]
+    try:
+        if netmask:
+            net = ipaddress.IPv4Network(f"{ip}/{netmask}", strict=False)
+            targets.append(str(net.broadcast_address))
+        else:
+            parts = ip.split(".")
+            targets.append(f"{parts[0]}.{parts[1]}.255.255")
+    except (ValueError, IndexError):
+        pass
+    return targets
+
+
+def _parse_discovery_ack(data: bytes, src_ip: str) -> dict | None:
+    """Parse one GVCP discovery ACK into a camera dict, or ``None`` if invalid.
+
+    Handles both the standard GigE Vision discovery ACK layout and the
+    extended layout used by some cameras that shift the string fields by
+    24 bytes.  The extended layout is detected when the manufacturer field
+    at the extended offset is non-empty and the standard offset is empty.
+
+    Parameters
+    ----------
+    data : bytes
+        Raw UDP payload received from the camera (8-byte GVCP header +
+        discovery ACK payload).  Must be at least 256 bytes.
+    src_ip : str
+        Source IPv4 address of the packet (used as the ``"ip"`` field in
+        the returned dict).
+
+    Returns
+    -------
+    dict or None
+        Camera information dict with keys ``"ip"``, ``"spec_version"``,
+        ``"manufacturer"``, ``"model"``, ``"device_version"``,
+        ``"manufacturer_info"``, ``"serial"``, ``"user_name"``; or ``None``
+        if *data* is too short to contain a valid ACK.
+    """
+    if len(data) < 256:
+        return None
+    payload = data[8:]
+
+    def _str(offset: int, size: int) -> str:
+        return payload[offset : offset + size].split(b"\x00")[0].decode("ascii", errors="replace")
+
+    mfr_ext = _str(72, 32)
+    mfr_std = _str(48, 32)
+    spec_version = f"{struct.unpack('>H', payload[0:2])[0]}.{struct.unpack('>H', payload[2:4])[0]}"
+    if mfr_ext and not mfr_std:
+        return {
+            "ip": src_ip,
+            "spec_version": spec_version,
+            "manufacturer": mfr_ext,
+            "model": _str(104, 32),
+            "device_version": _str(136, 32),
+            "manufacturer_info": _str(168, 48),
+            "serial": _str(216, 16),
+            "user_name": _str(232, 16),
+        }
+    return {
+        "ip": src_ip,
+        "spec_version": spec_version,
+        "manufacturer": mfr_std,
+        "model": _str(80, 32),
+        "device_version": _str(112, 32),
+        "manufacturer_info": _str(144, 48),
+        "serial": _str(192, 16),
+        "user_name": _str(208, 16),
+    }
 
 
 class GVCPError(Exception):
