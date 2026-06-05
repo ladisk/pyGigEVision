@@ -1,9 +1,8 @@
 # pyGigEVision for agents
 
 pyGigEVision is a pure-Python implementation of the GigE Vision protocol (GVCP
-control + GVSP streaming). No vendor SDK, no compiled extensions, no GenTL
-producers. It is the protocol layer that vendor-specific GigE Vision camera
-drivers build on top of.
+control + GVSP streaming). No vendor SDK, no GenTL producers. It is the
+protocol layer that vendor-specific GigE Vision camera drivers build on top of.
 
 This file is for coding agents. For the full human guide see
 [CONTRIBUTING.rst](CONTRIBUTING.rst); the commands here mirror it.
@@ -35,7 +34,7 @@ Public API (all re-exported at the top level): `GVCPClient`, `GVCPError`
 pip install -e ".[dev]"
 ```
 
-Pure-Python with only a numpy runtime dependency, so there are no SSH keys or
+Pure-Python protocol code (depends on numpy and psutil), so there are no SSH keys or
 private dependencies to configure.
 
 ## Test, lint, format

@@ -10,8 +10,7 @@ camera drivers can build on top of. It exposes the protocol primitives
 (discovery, control register access, streaming reception, and GenICam
 descriptor download) without bundling any vendor-specific behaviour.
 
-The package is pure Python: no compiled extensions, no vendor SDKs,
-no GenTL producers required.
+The protocol implementation is pure Python: no vendor SDKs, no GenTL producers.
 
 Installation
 ------------

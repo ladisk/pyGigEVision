@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.abspath("../.."))
 project = "pyGigEVision"
 author = "Jaša Šonc, Janko Slavič, Lorenzo Capponi"
 copyright = "2026, Jaša Šonc and Ladisk group, University of Ljubljana"
-release = "0.1.1"
+release = "0.2.0"
 # -- General configuration ---------------------------------------------------
 extensions = [
     "sphinx.ext.autodoc",
@@ -31,11 +31,10 @@ html_baseurl = "https://pygigevision.readthedocs.io/en/latest/"
 llms_txt_title = "pyGigEVision Documentation"
 llms_txt_summary = (
     "pyGigEVision is a pure-Python implementation of the GigE Vision protocol "
-    "(GVCP control and GVSP streaming), with no vendor SDK, no compiled "
-    "extensions, and no GenTL producers. It provides the protocol primitives "
-    "that vendor-specific camera drivers build on: device discovery, "
-    "control-register read/write, streaming reception, and GenICam descriptor "
-    "download."
+    "(GVCP control and GVSP streaming), with no vendor SDK and no GenTL producers. "
+    "It provides the protocol primitives that vendor-specific camera drivers build "
+    "on: device discovery, control-register read/write, streaming reception, and "
+    "GenICam descriptor download."
 )
 
 templates_path = ["_templates"]

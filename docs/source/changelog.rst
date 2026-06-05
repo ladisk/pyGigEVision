@@ -1,6 +1,17 @@
 Changelog
 =========
 
+Version 0.2.0
+-------------
+
+- ``GVCPClient.discover()`` now sweeps every host network interface (via
+  psutil), sending global and per-subnet broadcasts, so cameras on secondary
+  NICs and USB-to-GigE adapters are found by default.
+- Discovery results now include the camera ``mac``.
+- Added ``GVCPClient.force_ip()`` to assign an IP to a camera by MAC
+  (GVCP FORCEIP), for re-homing wrong-subnet cameras.
+- ``psutil`` is now a required dependency.
+
 Version 0.1.1
 -------------
 
