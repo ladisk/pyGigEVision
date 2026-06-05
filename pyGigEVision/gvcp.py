@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import ipaddress
+import select
 import socket
 import struct
 import threading
@@ -305,10 +306,13 @@ class GVCPClient:
     def discover(interface_ip: str = "", timeout: float = 2.0) -> list[dict]:
         """Broadcast a GVCP discovery packet and return all responding cameras.
 
-        Sends a ``CMD_DISCOVERY`` broadcast to ``255.255.255.255`` (and, if
-        *interface_ip* is given, also to the /16 subnet broadcast of that
-        interface) on UDP port 3956.  Parses each discovery ACK into a
-        dictionary.
+        When *interface_ip* is empty (the default), discovery sweeps every
+        host interface: it binds a dedicated socket per NIC and sends both
+        the global broadcast (``255.255.255.255``) and the per-subnet
+        broadcast for each interface, then merges the results.  When
+        *interface_ip* is given, a single socket bound to that interface is
+        used.  All sends go to UDP port 3956 and each discovery ACK is
+        parsed into a dictionary.
 
         Both the standard GigE Vision discovery ACK layout and the extended
         layout (used by some cameras that prepend 24 extra bytes before the
@@ -353,89 +357,58 @@ class GVCPClient:
         >>> for cam in cameras:
         ...     print(cam["ip"], cam["model"])
         """
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        pkt = struct.pack(">BBHHH", GVCP_KEY, FLAG_BROADCAST, CMD_DISCOVERY, 0, 0xFFFF)
+
+        if interface_ip:
+            targets = [(interface_ip, _subnet_broadcasts_for(interface_ip, None))]
+        else:
+            targets = [
+                (ip, _subnet_broadcasts_for(ip, mask)) for ip, mask in _enumerate_interfaces()
+            ]
+            if not targets:
+                targets = [("", ["255.255.255.255"])]
+
+        socks: list[socket.socket] = []
         try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            sock.settimeout(timeout)
-            if interface_ip:
-                sock.bind((interface_ip, 0))
-
-            pkt = struct.pack(">BBHHH", GVCP_KEY, FLAG_BROADCAST, CMD_DISCOVERY, 0, 0xFFFF)
-
-            # Send to broadcast addresses
-            for dest in ("255.255.255.255",):
-                with contextlib.suppress(OSError):
-                    sock.sendto(pkt, (dest, GVCP_PORT))
-            # Also try subnet broadcast if we have an interface IP
-            if interface_ip:
-                parts = interface_ip.split(".")
-                subnet_broadcast = f"{parts[0]}.{parts[1]}.255.255"
-                with contextlib.suppress(OSError):
-                    sock.sendto(pkt, (subnet_broadcast, GVCP_PORT))
+            for bind_ip, bcasts in targets:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                if bind_ip:
+                    try:
+                        sock.bind((bind_ip, 0))
+                    except OSError:
+                        sock.close()
+                        continue
+                for dest in bcasts:
+                    with contextlib.suppress(OSError):
+                        sock.sendto(pkt, (dest, GVCP_PORT))
+                socks.append(sock)
 
             cameras: list[dict] = []
             seen_ips: set[str] = set()
+            deadline = time.monotonic() + timeout
             while True:
-                try:
-                    data, addr = sock.recvfrom(4096)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                rlist, _, _ = select.select(socks, [], [], remaining)
+                if not rlist:
+                    break
+                for sock in rlist:
+                    try:
+                        data, addr = sock.recvfrom(4096)
+                    except OSError:
+                        continue
                     if addr[0] in seen_ips:
                         continue
                     seen_ips.add(addr[0])
-
-                    if len(data) < 256:
-                        continue
-
-                    # Parse discovery ACK payload (starts at byte 8)
-                    payload = data[8:]
-
-                    def _str(offset: int, size: int, _payload: bytes = payload) -> str:
-                        return (
-                            _payload[offset : offset + size]
-                            .split(b"\x00")[0]
-                            .decode("ascii", errors="replace")
-                        )
-
-                    # Try extended format first (some cameras add 24 bytes before strings)
-                    # then fall back to standard offsets
-                    mfr_ext = _str(72, 32)
-                    mfr_std = _str(48, 32)
-
-                    if mfr_ext and not mfr_std:
-                        # Extended discovery format
-                        cameras.append(
-                            {
-                                "ip": addr[0],
-                                "spec_version": f"{struct.unpack('>H', payload[0:2])[0]}."
-                                f"{struct.unpack('>H', payload[2:4])[0]}",
-                                "manufacturer": mfr_ext,
-                                "model": _str(104, 32),
-                                "device_version": _str(136, 32),
-                                "manufacturer_info": _str(168, 48),
-                                "serial": _str(216, 16),
-                                "user_name": _str(232, 16),
-                            }
-                        )
-                    else:
-                        # Standard discovery format
-                        cameras.append(
-                            {
-                                "ip": addr[0],
-                                "spec_version": f"{struct.unpack('>H', payload[0:2])[0]}."
-                                f"{struct.unpack('>H', payload[2:4])[0]}",
-                                "manufacturer": mfr_std,
-                                "model": _str(80, 32),
-                                "device_version": _str(112, 32),
-                                "manufacturer_info": _str(144, 48),
-                                "serial": _str(192, 16),
-                                "user_name": _str(208, 16),
-                            }
-                        )
-                except TimeoutError:
-                    break
+                    cam = _parse_discovery_ack(data, addr[0])
+                    if cam is not None:
+                        cameras.append(cam)
+            return cameras
         finally:
-            sock.close()
-
-        return cameras
+            for sock in socks:
+                sock.close()
 
     # --- Connection ---
 

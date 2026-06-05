@@ -2,6 +2,7 @@ import socket
 import types
 from unittest.mock import patch
 
+import pyGigEVision.gvcp as gvcp_mod
 from pyGigEVision.gvcp import _enumerate_interfaces, _parse_discovery_ack, _subnet_broadcasts_for
 
 
@@ -66,3 +67,73 @@ def test_parse_discovery_ack_standard():
 
 def test_parse_discovery_ack_too_short_returns_none():
     assert _parse_discovery_ack(b"\x00" * 20, "1.2.3.4") is None
+
+
+class _FakeSock:
+    responses = []
+
+    def __init__(self, family, type_):
+        self.sent = []
+        self._responses = list(_FakeSock.responses)
+        self.closed = False
+
+    def setsockopt(self, *a):
+        pass
+
+    def bind(self, addr):
+        self.bound = addr
+
+    def sendto(self, data, addr):
+        self.sent.append(addr)
+
+    def settimeout(self, t):
+        pass
+
+    def recvfrom(self, n):
+        if self._responses:
+            return self._responses.pop(0)
+        raise BlockingIOError
+
+    def close(self):
+        self.closed = True
+
+
+def test_discover_enumerates_all_interfaces_and_dedupes(monkeypatch):
+    ack = _standard_ack(manufacturer="ACME", model="CamX")
+    _FakeSock.responses = [(ack, ("169.254.9.9", 3956))]
+    monkeypatch.setattr(
+        gvcp_mod,
+        "_enumerate_interfaces",
+        lambda: [("192.168.0.10", "255.255.255.0"), ("169.254.1.5", "255.255.0.0")],
+    )
+    monkeypatch.setattr(gvcp_mod.socket, "socket", _FakeSock)
+    calls = {"n": 0}
+
+    def fake_select(rlist, wlist, xlist, timeout):
+        calls["n"] += 1
+        return (rlist[:1], [], []) if calls["n"] == 1 else ([], [], [])
+
+    monkeypatch.setattr(gvcp_mod.select, "select", fake_select)
+
+    cams = gvcp_mod.GVCPClient.discover(timeout=0.2)
+    assert len(cams) == 1
+    assert cams[0]["ip"] == "169.254.9.9"
+    assert cams[0]["model"] == "CamX"
+
+
+def test_discover_sends_global_and_subnet_broadcasts(monkeypatch):
+    _FakeSock.responses = []
+    sent_targets = []
+
+    class _RecordSock(_FakeSock):
+        def sendto(self, data, addr):
+            sent_targets.append(addr[0])
+
+    monkeypatch.setattr(
+        gvcp_mod, "_enumerate_interfaces", lambda: [("192.168.5.10", "255.255.255.0")]
+    )
+    monkeypatch.setattr(gvcp_mod.socket, "socket", _RecordSock)
+    monkeypatch.setattr(gvcp_mod.select, "select", lambda *a: ([], [], []))
+    gvcp_mod.GVCPClient.discover(timeout=0.1)
+    assert "255.255.255.255" in sent_targets
+    assert "192.168.5.255" in sent_targets
