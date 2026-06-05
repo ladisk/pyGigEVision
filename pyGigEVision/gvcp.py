@@ -34,6 +34,8 @@ import struct
 import threading
 import time
 
+import psutil
+
 from .standard import REG_CCP
 
 # --- GVCP Constants ---
@@ -69,6 +71,20 @@ STATUS_NAMES = {
 
 # Max payload for READMEM (safe for standard Ethernet)
 READMEM_CHUNK = 512
+
+
+def _enumerate_interfaces() -> list[tuple[str, str]]:
+    """Return ``(ip, netmask)`` for every up, non-loopback IPv4 interface."""
+    out: list[tuple[str, str]] = []
+    stats = psutil.net_if_stats()
+    for name, addrs in psutil.net_if_addrs().items():
+        st = stats.get(name)
+        if st is None or not st.isup:
+            continue
+        for a in addrs:
+            if a.family == socket.AF_INET and a.address and not a.address.startswith("127."):
+                out.append((a.address, a.netmask or "255.255.255.0"))
+    return out
 
 
 class GVCPError(Exception):
