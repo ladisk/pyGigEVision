@@ -27,6 +27,7 @@ def test_force_ip_builds_correct_packet(monkeypatch):
     data, addr = _CaptureSock.last
     assert addr == ("255.255.255.255", 3956)
     key, flag, cmd, length, req = struct.unpack(">BBHHH", data[:8])
+    assert req == 1
     assert key == 0x42
     assert cmd == 0x0004
     payload = data[8:]

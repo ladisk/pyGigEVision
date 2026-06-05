@@ -415,7 +415,7 @@ class GVCPClient:
                 sock.close()
 
     @staticmethod
-    def force_ip(mac, ip: str, mask: str, gateway: str = "0.0.0.0", timeout: float = 2.0) -> None:
+    def force_ip(mac, ip: str, mask: str, gateway: str = "0.0.0.0") -> None:
         """Broadcast a GVCP FORCEIP command to assign an IP to a camera by MAC.
 
         Re-homes a camera that is on the wrong subnet (or fell back to
@@ -430,8 +430,6 @@ class GVCPClient:
             New IPv4 address and subnet mask for the camera.
         gateway : str, optional
             Default gateway. Default ``"0.0.0.0"`` (none).
-        timeout : float, optional
-            Reserved for symmetry; the command is fire-and-forget.
 
         HARDWARE-GATED: the FORCEIP payload layout (issue #10 table) and the
         camera's reboot behavior are validated by the provisioning acceptance

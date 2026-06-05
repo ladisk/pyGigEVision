@@ -100,7 +100,7 @@ class _FakeSock:
 
 def test_discover_enumerates_all_interfaces_and_dedupes(monkeypatch):
     ack = _standard_ack(manufacturer="ACME", model="CamX")
-    _FakeSock.responses = [(ack, ("169.254.9.9", 3956))]
+    _FakeSock.responses = [(ack, ("169.254.9.9", 3956)), (ack, ("169.254.9.9", 3956))]
     monkeypatch.setattr(
         gvcp_mod,
         "_enumerate_interfaces",
@@ -111,7 +111,7 @@ def test_discover_enumerates_all_interfaces_and_dedupes(monkeypatch):
 
     def fake_select(rlist, wlist, xlist, timeout):
         calls["n"] += 1
-        return (rlist[:1], [], []) if calls["n"] == 1 else ([], [], [])
+        return (rlist[:1], [], []) if calls["n"] <= 2 else ([], [], [])
 
     monkeypatch.setattr(gvcp_mod.select, "select", fake_select)
 
