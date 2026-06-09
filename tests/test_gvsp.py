@@ -136,6 +136,105 @@ class TestContiguousRanges:
         assert GVSPReceiver._contiguous_ranges([1, 3, 5]) == [(1, 1), (3, 3), (5, 5)]
 
 
+class TestReceiveLoopThrottle:
+    """The per-packet gap check must be throttled to sustain line rate."""
+
+    def test_gap_check_throttled_under_packet_flood(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        rx._sock.close()  # drop the real bound socket; drive the loop with a fake
+
+        calls = {"n": 0}
+
+        def count():
+            calls["n"] += 1
+
+        rx._check_gaps_and_timeouts = count
+
+        # 300 well-formed but inert packets (unknown packet type -> no handler
+        # is invoked), then stop the loop via a single socket timeout.
+        packets = [b"\x00" * 40 for _ in range(300)]
+
+        class _FakeSock:
+            def recvfrom(self, _n):
+                if packets:
+                    return packets.pop(0), ("127.0.0.1", 1)
+                rx._stop_event.set()
+                raise TimeoutError
+
+            def close(self):
+                pass
+
+        rx._sock = _FakeSock()
+        rx._receive_loop()
+
+        # Throttled: ~300//128 = 2 checks from packets (+1 from the final
+        # timeout). Without throttling this would be ~301.
+        assert calls["n"] <= 5
+
+
+class TestFrameLifecycle:
+    """Completed frames must not accumulate in _frame_buffers."""
+
+    def test_completed_frame_freed_after_emit(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            rx._packet_data_size = 8
+            buf = _FrameBuffer(7)
+            buf.leader_received = True
+            buf.pixel_format = PIXEL_MONO16
+            buf.width, buf.height = 4, 2  # 16 bytes -> 2 packets of 8
+            buf.setup_buffer(8)
+            buf.write_packet(1, b"\x00" * 8)
+            buf.write_packet(2, b"\x00" * 8)
+            rx._frame_buffers[7] = buf
+
+            rx._handle_trailer(7, b"")
+
+            assert 7 not in rx._frame_buffers  # freed on emit
+            assert rx._frame_queue.qsize() == 1  # frame emitted
+        finally:
+            rx.close()
+
+
+class TestResendStats:
+    """Resend recovery accounting and per-download reset."""
+
+    def test_recovered_counts_requested_packets_that_arrived(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            rx._packet_data_size = 8
+            buf = _FrameBuffer(9)
+            buf.leader_received = True
+            buf.pixel_format = PIXEL_MONO16
+            buf.width, buf.height = 4, 2  # 2 packets
+            buf.setup_buffer(8)
+            # packet 1 was resend-requested and then arrived (recovered);
+            # packet 2 arrived normally.
+            buf._resend_requested = {1}
+            buf.write_packet(1, b"\x00" * 8)
+            buf.write_packet(2, b"\x00" * 8)
+            rx._frame_buffers[9] = buf
+
+            rx._handle_trailer(9, b"")
+
+            assert rx._resend_stats["recovered"] == 1
+        finally:
+            rx.close()
+
+    def test_reset_resend_stats_zeroes_counters(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            rx._resend_stats["requested"] = 5
+            rx._resend_stats["recovered"] = 2
+            rx._resend_stats["failed"] = 1
+
+            rx.reset_resend_stats()
+
+            assert rx._resend_stats == {"requested": 0, "recovered": 0, "failed": 0}
+        finally:
+            rx.close()
+
+
 class TestPixelFormats:
     """Test pixel format definitions."""
 

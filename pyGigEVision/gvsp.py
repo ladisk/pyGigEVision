@@ -81,6 +81,11 @@ _GVCP_KEY = 0x42
 _GVCP_FLAG_ACK = 0x01
 _GVCP_CMD_PACKETRESEND = 0x0040
 
+# Run the gap/timeout scan at most once per this many received packets (plus on
+# every socket timeout). Bounds the per-packet cost of the receive loop so it
+# sustains line rate under host CPU contention.
+_GAP_CHECK_EVERY = 128
+
 
 class _FrameBuffer:
     """Accumulate packets for a single in-flight frame.
@@ -485,16 +490,26 @@ class GVSPReceiver:
         except Empty:
             return None
 
+    def reset_resend_stats(self) -> None:
+        """Zero the resend counters (``requested``/``recovered``/``failed``).
+
+        The counters otherwise accumulate for the lifetime of the receiver.
+        Call this before a fresh download to get per-download resend figures.
+        """
+        self._resend_stats = {"requested": 0, "recovered": 0, "failed": 0}
+
     # --- Internal ---
 
     def _receive_loop(self) -> None:
         """Main receiver loop with real-time gap detection."""
+        since_check = 0
         while not self._stop_event.is_set():
             try:
                 data, addr = self._sock.recvfrom(65536)
             except TimeoutError:
                 # No packet received; check for gaps and stale frames
                 self._check_gaps_and_timeouts()
+                since_check = 0
                 continue
             except OSError:
                 break
@@ -504,8 +519,14 @@ class GVSPReceiver:
 
             self._parse_packet(data)
 
-            # Check gaps on every packet (aravis pattern)
-            self._check_gaps_and_timeouts()
+            # Gap detection is throttled to every _GAP_CHECK_EVERY packets
+            # (plus every socket timeout) so the per-packet receive cost stays
+            # low enough to sustain line rate under host CPU contention.
+            # Completed frames still emit immediately on trailer receipt.
+            since_check += 1
+            if since_check >= _GAP_CHECK_EVERY:
+                self._check_gaps_and_timeouts()
+                since_check = 0
 
     def _parse_packet(self, data: bytes) -> None:
         """Parse a single GVSP packet."""
@@ -586,6 +607,12 @@ class GVSPReceiver:
             self._resend_stats["failed"] += len(missing)
             logger.warning(
                 f"Frame {block_id}: {len(missing)}/{buf.expected_packets} packets unrecoverable"
+            )
+
+        # Count packets that were resend-requested and ultimately arrived.
+        if buf._resend_requested and buf._received is not None:
+            self._resend_stats["recovered"] += sum(
+                1 for p in buf._resend_requested if p < len(buf._received) and buf._received[p]
             )
 
         # Assemble and emit
