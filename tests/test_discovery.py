@@ -142,3 +142,58 @@ def test_discover_sends_global_and_subnet_broadcasts(monkeypatch):
 def test_parse_discovery_ack_includes_mac():
     cam = _parse_discovery_ack(_standard_ack(mac=b"\xaa\xbb\xcc\xdd\xee\xff"), "1.2.3.4")
     assert cam["mac"] == "aa:bb:cc:dd:ee:ff"
+
+
+def test_discover_records_reply_interface(monkeypatch):
+    ack = _standard_ack(manufacturer="ACME", model="CamX")
+    _FakeSock.responses = [(ack, ("169.254.9.9", 3956))]
+    monkeypatch.setattr(
+        gvcp_mod,
+        "_enumerate_interfaces",
+        lambda: [("192.168.0.10", "255.255.255.0"), ("169.254.1.5", "255.255.0.0")],
+    )
+    monkeypatch.setattr(gvcp_mod.socket, "socket", _FakeSock)
+    calls = {"n": 0}
+
+    def fake_select(rlist, wlist, xlist, timeout):
+        calls["n"] += 1
+        # deliver the ACK on the SECOND socket (bound to 169.254.1.5)
+        return (rlist[1:2], [], []) if calls["n"] == 1 else ([], [], [])
+
+    monkeypatch.setattr(gvcp_mod.select, "select", fake_select)
+    cams = gvcp_mod.GVCPClient.discover(timeout=0.2)
+    assert len(cams) == 1
+    assert cams[0]["interface_ip"] == "169.254.1.5"
+
+
+def test_discover_explicit_interface_records_itself(monkeypatch):
+    ack = _standard_ack(manufacturer="ACME", model="CamX")
+    _FakeSock.responses = [(ack, ("169.254.9.9", 3956))]
+    monkeypatch.setattr(gvcp_mod.socket, "socket", _FakeSock)
+    calls = {"n": 0}
+
+    def fake_select(rlist, wlist, xlist, timeout):
+        calls["n"] += 1
+        return (rlist[:1], [], []) if calls["n"] == 1 else ([], [], [])
+
+    monkeypatch.setattr(gvcp_mod.select, "select", fake_select)
+    cams = gvcp_mod.GVCPClient.discover(interface_ip="10.0.0.2", timeout=0.2)
+    assert cams[0]["interface_ip"] == "10.0.0.2"
+
+
+def test_discover_os_chosen_socket_has_empty_interface(monkeypatch):
+    ack = _standard_ack(manufacturer="ACME", model="CamX")
+    _FakeSock.responses = [(ack, ("169.254.9.9", 3956))]
+    monkeypatch.setattr(
+        gvcp_mod, "_enumerate_interfaces", lambda: []
+    )  # -> ("", ["255.255.255.255"])
+    monkeypatch.setattr(gvcp_mod.socket, "socket", _FakeSock)
+    calls = {"n": 0}
+
+    def fake_select(rlist, wlist, xlist, timeout):
+        calls["n"] += 1
+        return (rlist[:1], [], []) if calls["n"] == 1 else ([], [], [])
+
+    monkeypatch.setattr(gvcp_mod.select, "select", fake_select)
+    cams = gvcp_mod.GVCPClient.discover(timeout=0.2)
+    assert cams[0]["interface_ip"] == ""

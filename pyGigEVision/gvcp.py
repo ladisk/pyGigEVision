@@ -354,6 +354,11 @@ class GVCPClient:
                 Serial number string.
             ``"user_name"``
                 User-assigned name string (may be empty).
+            ``"interface_ip"``
+                IPv4 address of the local host interface whose socket
+                received this camera's discovery reply, or ``""`` when the
+                OS chose the socket. Lets a caller bind the same interface
+                for follow-up unicast control.
 
         Examples
         --------
@@ -373,6 +378,7 @@ class GVCPClient:
                 targets = [("", ["255.255.255.255"])]
 
         socks: list[socket.socket] = []
+        sock_bind: dict[socket.socket, str] = {}
         try:
             for bind_ip, bcasts in targets:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -387,6 +393,7 @@ class GVCPClient:
                     with contextlib.suppress(OSError):
                         sock.sendto(pkt, (dest, GVCP_PORT))
                 socks.append(sock)
+                sock_bind[sock] = bind_ip
 
             cameras: list[dict] = []
             seen_ips: set[str] = set()
@@ -408,6 +415,7 @@ class GVCPClient:
                     seen_ips.add(addr[0])
                     cam = _parse_discovery_ack(data, addr[0])
                     if cam is not None:
+                        cam["interface_ip"] = sock_bind.get(sock, "")
                         cameras.append(cam)
             return cameras
         finally:
