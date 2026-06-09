@@ -9,6 +9,8 @@ Pure-Python implementation of the GigE Vision protocol, covering GVCP
 camera drivers can build on top of. It exposes the protocol primitives
 (discovery, control register access, streaming reception, and GenICam
 descriptor download) without bundling any vendor-specific behaviour.
+For example, ``pyTelops`` (a driver for Telops infrared cameras) builds
+on this protocol layer.
 
 The protocol implementation is pure Python: no vendor SDKs, no GenTL producers.
 
@@ -42,6 +44,11 @@ Quickstart
 
     client.disconnect()
 
+``discover()`` searches all host network interfaces by default, so cameras
+on secondary NICs and USB-to-GigE adapters are found without naming an
+interface. If a camera comes up on the wrong subnet, ``force_ip()`` can
+re-home it by MAC address.
+
 Documentation
 -------------
 
@@ -49,6 +56,12 @@ Full documentation at https://pygigevision.readthedocs.io.
 
 Examples (vendor-neutral, runnable against any GigE Vision camera) are
 in the ``examples/`` directory.
+
+Projects using pyGigEVision
+---------------------------
+
+- `pyTelops <https://github.com/ladisk/pyTelops>`_ - driver for Telops
+  infrared cameras.
 
 Status
 ------
