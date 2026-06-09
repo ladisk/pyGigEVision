@@ -46,8 +46,7 @@ Quickstart
 
 ``discover()`` searches all host network interfaces by default, so cameras
 on secondary NICs and USB-to-GigE adapters are found without naming an
-interface. If a camera comes up on the wrong subnet, ``force_ip()`` can
-re-home it by MAC address.
+interface.
 
 Documentation
 -------------
