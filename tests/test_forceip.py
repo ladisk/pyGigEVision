@@ -31,11 +31,14 @@ def test_force_ip_builds_correct_packet(monkeypatch):
     assert key == 0x42
     assert cmd == 0x0004
     payload = data[8:]
-    assert len(payload) == 64
+    # FORCEIP_CMD layout per the GigE Vision spec (matches the Wireshark GVCP
+    # dissector): MAC at 2, static IP at 20, subnet mask at 36, gateway at 52;
+    # 56-byte payload. Fields sit in 16-byte slots after a 12-byte reserved gap.
+    assert len(payload) == 56
     assert payload[2:8] == bytes.fromhex("aabbccddeeff")
-    assert payload[24:28] == socket.inet_aton("192.168.1.50")
-    assert payload[44:48] == socket.inet_aton("255.255.255.0")
-    assert payload[60:64] == socket.inet_aton("192.168.1.1")
+    assert payload[20:24] == socket.inet_aton("192.168.1.50")
+    assert payload[36:40] == socket.inet_aton("255.255.255.0")
+    assert payload[52:56] == socket.inet_aton("192.168.1.1")
 
 
 def test_force_ip_accepts_raw_mac_bytes(monkeypatch):
@@ -43,4 +46,5 @@ def test_force_ip_accepts_raw_mac_bytes(monkeypatch):
     GVCPClient.force_ip(b"\x01\x02\x03\x04\x05\x06", "10.0.0.5", "255.0.0.0")
     payload = _CaptureSock.last[0][8:]
     assert payload[2:8] == b"\x01\x02\x03\x04\x05\x06"
-    assert payload[60:64] == socket.inet_aton("0.0.0.0")
+    assert payload[20:24] == socket.inet_aton("10.0.0.5")
+    assert payload[52:56] == socket.inet_aton("0.0.0.0")

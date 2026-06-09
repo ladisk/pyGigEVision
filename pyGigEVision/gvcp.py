@@ -450,11 +450,14 @@ class GVCPClient:
         if len(mac_bytes) != 6:
             raise ValueError(f"MAC must be 6 bytes, got {len(mac_bytes)}")
 
-        payload = bytearray(64)
+        # FORCEIP_CMD payload layout (GigE Vision spec): a 2-byte reserved field,
+        # the 6-byte MAC, then the static IP, subnet mask, and gateway each in a
+        # 16-byte slot (12 reserved bytes + 4-byte value). 56 bytes total.
+        payload = bytearray(56)
         payload[2:8] = mac_bytes
-        payload[24:28] = socket.inet_aton(ip)
-        payload[44:48] = socket.inet_aton(mask)
-        payload[60:64] = socket.inet_aton(gateway)
+        payload[20:24] = socket.inet_aton(ip)
+        payload[36:40] = socket.inet_aton(mask)
+        payload[52:56] = socket.inet_aton(gateway)
         pkt = struct.pack(">BBHHH", GVCP_KEY, FLAG_BROADCAST, CMD_FORCEIP, len(payload), 1) + bytes(
             payload
         )
