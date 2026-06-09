@@ -19,7 +19,7 @@ def main() -> None:
         print("\nTroubleshooting:")
         print("  * Verify camera is powered on and on the same subnet as a NIC")
         print("  * On Windows: set the Ethernet adapter profile to Private")
-        print("  * Stop VPN services that own a link-local interface (e.g. Tailscale)")
+        print("  * Stop VPN services that own a link-local interface")
         return
 
     print(f"\nFound {len(cameras)} camera(s):\n")

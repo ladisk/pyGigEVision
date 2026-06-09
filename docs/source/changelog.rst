@@ -11,6 +11,11 @@ Version 0.2.0
 - Added ``GVCPClient.force_ip()`` to assign an IP to a camera by MAC
   (GVCP FORCEIP), for re-homing wrong-subnet cameras.
 - ``psutil`` is now a required dependency.
+- Discovery results now include ``interface_ip``, the host interface the
+  camera replied on, so vendor drivers can bind the correct local interface
+  when connecting.
+- Added ``GVSPReceiver.reset_resend_stats()`` to clear per-stream resend
+  counters between downloads.
 
 Version 0.1.1
 -------------

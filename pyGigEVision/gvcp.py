@@ -439,9 +439,13 @@ class GVCPClient:
         gateway : str, optional
             Default gateway. Default ``"0.0.0.0"`` (none).
 
-        HARDWARE-GATED: the FORCEIP payload layout (issue #10 table) and the
-        camera's reboot behavior are validated by the provisioning acceptance
-        script, not by hardware in unit tests.
+        Notes
+        -----
+        FORCEIP is a broadcast command and is not acknowledged by the camera. The
+        camera reboots its IP stack to apply the new address, so allow a short delay
+        (about one second) before re-running discovery to see it at the new IP. The
+        assignment is not persistent; power-cycling the camera returns it to its
+        configured startup behavior (typically DHCP then link-local).
         """
         if isinstance(mac, str):
             mac_bytes = bytes.fromhex(mac.replace(":", "").replace("-", ""))

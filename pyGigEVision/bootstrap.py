@@ -15,7 +15,7 @@ from .standard import REG_CCP, REG_HEARTBEAT_TIMEOUT
 # CCP value 2 = exclusive control access
 _CCP_EXCLUSIVE = 0x00000002
 
-# 3 second heartbeat timeout — matches pyTelops default
+# 3 second heartbeat keepalive; long enough to tolerate brief stalls
 _DEFAULT_HEARTBEAT_MS = 3000
 
 

@@ -31,6 +31,31 @@ heartbeat keepalive in a background thread.
 Bootstrap (boot-time) registers defined by the GigE Vision spec live
 in :mod:`pyGigEVision.standard`.
 
+Discovery
+~~~~~~~~~
+
+:func:`pyGigEVision.discover` called with no argument (``discover("")``)
+enumerates the host network interfaces (via ``psutil``) and scans from
+each one. On every interface it sends a global broadcast and a
+per-subnet directed broadcast, then dedupes the replies by camera IP.
+Sweeping all interfaces by default means cameras on secondary NICs and
+on USB-to-GigE adapters are found without naming an interface. Pass an
+explicit ``interface_ip`` to restrict the scan to a single host
+interface.
+
+Each result dict includes the camera ``ip`` and ``mac`` as well as
+``interface_ip``, the host interface address the camera replied on.
+A vendor driver can use ``interface_ip`` to bind the matching local
+interface when it connects, which keeps the connection on the same NIC
+that saw the discovery reply.
+
+If a camera comes up on a subnet that none of the host interfaces can
+reach, :meth:`~pyGigEVision.GVCPClient.force_ip` re-homes it by MAC. It
+broadcasts a FORCEIP command that assigns a new ``ip`` and ``mask`` (and
+optional ``gateway``) to the camera identified by ``mac``, so it lands
+on a reachable subnet. The assignment is not persistent across a power
+cycle.
+
 GVSP
 ----
 
@@ -61,9 +86,10 @@ Troubleshooting
 Check that the camera is on the same subnet as one of your network
 interfaces. On Windows, also verify that the Ethernet adapter profile
 is set to ``Private`` (Public profile blocks inbound UDP by default).
-If a VPN like Tailscale is running, its virtual link-local interface
-may shadow the camera's Ethernet adapter. In that case, pass an
-explicit ``interface_ip`` to :func:`pyGigEVision.discover`.
+If a VPN is active and owns a virtual link-local interface, that
+interface may shadow the camera's Ethernet adapter. In that case, pass
+an explicit ``interface_ip`` to :func:`pyGigEVision.discover` to scan
+from the host interface the camera is attached to.
 
 **Packets unrecoverable warnings during streaming.**
 Host-side UDP buffer overflows. Try one of:

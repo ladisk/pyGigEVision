@@ -23,6 +23,8 @@ Requirements
 
 * Python 3.10 or newer
 * NumPy 1.20 or newer
+* ``psutil`` (used to enumerate host network interfaces for
+  multi-interface discovery)
 * A network interface that can reach the camera (usually a link-local
   ``169.254.x.x`` address on a dedicated Ethernet adapter, or a routed
   ``192.168.x.x`` subnet)
@@ -41,6 +43,22 @@ Discover any GigE Vision cameras on the network:
     cameras = discover(timeout=2.0)
     for cam in cameras:
         print(f"{cam['manufacturer']:30s} {cam['model']:30s} {cam['ip']}")
+
+Called with no interface argument, ``discover()`` sweeps every host
+network interface, so cameras on secondary NICs and USB-to-GigE adapters
+are found by default. Each result dict includes ``ip``, ``mac``, and
+``interface_ip`` (the host interface the camera replied on), which lets a
+caller bind the correct local interface when connecting.
+
+If a camera comes up on a subnet none of your host interfaces can reach,
+use ``force_ip(mac, ip, mask)`` to re-home it to a reachable address:
+
+.. code-block:: python
+
+    from pyGigEVision import GVCPClient
+
+    # force_ip is a static method; it broadcasts and needs no connection.
+    GVCPClient.force_ip(cam["mac"], "169.254.10.50", "255.255.0.0")
 
 If no cameras appear, see the :doc:`protocol` page for troubleshooting
 network setup and packet capture.
