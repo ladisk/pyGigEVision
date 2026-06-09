@@ -20,9 +20,9 @@ from the host; vendor-dependent).
 Notes
 -----
 Implements aravis-inspired patterns: pre-allocated frame buffers
-(direct offset writes, no dict-and-sort assembly), real-time gap
-detection on every received packet, three-tier timeouts (initial gap
-grace, resend interval, frame retention).
+(direct offset writes, no dict-and-sort assembly), throttled gap
+detection (every few packets plus on each socket timeout), three-tier
+timeouts (initial gap grace, resend interval, frame retention).
 
 See Also
 --------
@@ -642,7 +642,8 @@ class GVSPReceiver:
     def _check_gaps_and_timeouts(self) -> None:
         """Real-time gap detection and frame retention timeout.
 
-        Called on every received packet and on socket timeouts.
+        Called every ``_GAP_CHECK_EVERY`` received packets and on socket
+        timeouts.
         - Requests resend for packets missing longer than initial_packet_timeout
         - Emits or drops frames older than frame_retention
         """
