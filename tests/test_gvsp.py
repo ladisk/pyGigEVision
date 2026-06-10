@@ -3,6 +3,8 @@
 Tests frame buffer logic and packet parsing without a physical camera.
 """
 
+import time
+
 import numpy as np
 
 from pyGigEVision.gvsp import (
@@ -240,6 +242,69 @@ class TestFrameComplete:
         info = self._drive_frame(missing_second_packet=True)
         assert info["missing_packets"] == 1
         assert info["complete"] is False
+
+
+class TestPacketTimeout:
+    """An in-progress frame is finalized after ``packet_timeout`` of silence."""
+
+    def test_partial_frame_emitted_after_packet_timeout(self):
+        # packet_timeout is much shorter than frame_retention, so the only way
+        # this frame can be emitted is via the inter-packet wait.
+        rx = GVSPReceiver(
+            local_ip="127.0.0.1",
+            packet_timeout=0.01,
+            frame_retention=10.0,
+        )
+        try:
+            rx._packet_data_size = 8
+            buf = _FrameBuffer(13)
+            buf.leader_received = True
+            buf.pixel_format = PIXEL_MONO16
+            buf.width, buf.height = 4, 2  # 16 bytes -> 2 packets of 8
+            buf.setup_buffer(8)
+            buf.write_packet(1, b"\x00" * 8)  # packet 2 never arrives
+            rx._frame_buffers[13] = buf
+
+            # Backdate so the inter-packet silence exceeds packet_timeout but
+            # the much longer frame_retention has not elapsed.
+            now = time.monotonic()
+            buf.created_at = now - 0.5
+            buf.last_packet_at = now - 0.5
+
+            rx._check_gaps_and_timeouts()
+
+            assert 13 not in rx._frame_buffers  # finalized and freed
+            assert rx._frame_queue.qsize() == 1
+            _frame, info = rx._frame_queue.get_nowait()
+            assert info["complete"] is False
+            assert info["missing_packets"] == 1
+        finally:
+            rx.close()
+
+    def test_complete_frame_not_emitted_early_by_packet_timeout(self):
+        # A frame still receiving packets within packet_timeout must not be
+        # finalized prematurely.
+        rx = GVSPReceiver(
+            local_ip="127.0.0.1",
+            packet_timeout=10.0,
+            frame_retention=10.0,
+        )
+        try:
+            rx._packet_data_size = 8
+            buf = _FrameBuffer(14)
+            buf.leader_received = True
+            buf.pixel_format = PIXEL_MONO16
+            buf.width, buf.height = 4, 2
+            buf.setup_buffer(8)
+            buf.write_packet(1, b"\x00" * 8)  # still in progress, recently
+            rx._frame_buffers[14] = buf
+
+            rx._check_gaps_and_timeouts()
+
+            assert 14 in rx._frame_buffers  # not finalized
+            assert rx._frame_queue.qsize() == 0
+        finally:
+            rx.close()
 
 
 class TestResendStats:
