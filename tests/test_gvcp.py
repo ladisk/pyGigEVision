@@ -122,6 +122,26 @@ class TestGVCPClientInit:
         assert READMEM_CHUNK <= 512
 
 
+def test_read_mem_chunks_are_4_byte_aligned():
+    """Each READMEM chunk is rounded up to a 4-byte multiple, output is trimmed."""
+    import threading
+
+    from pyGigEVision.gvcp import GVCPClient
+
+    client = GVCPClient.__new__(GVCPClient)  # no socket
+    client._lock = threading.RLock()
+    seen = []
+
+    def fake_raw(addr, n):
+        seen.append(n)
+        return bytes(n)  # n zero bytes
+
+    client._read_mem_raw = fake_raw
+    out = client.read_mem(0x1000, 1023)  # not a multiple of 4
+    assert len(out) == 1023  # trimmed to exact size
+    assert all(n % 4 == 0 for n in seen)  # every chunk 4-aligned
+
+
 class TestConstants:
     """Test protocol constants."""
 

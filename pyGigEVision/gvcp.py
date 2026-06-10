@@ -703,6 +703,11 @@ class GVCPClient:
         Each chunk is read with the lock held, so concurrent register
         operations may interleave between chunks.
 
+        The GigE Vision spec requires every READMEM byte-count to be a
+        multiple of 4, and some cameras reject unaligned reads.  Each chunk
+        count is therefore rounded up to a 4-byte multiple on the wire and
+        the returned bytes are trimmed back to the exact *size* requested.
+
         Parameters
         ----------
         addr : int
@@ -730,11 +735,12 @@ class GVCPClient:
         result = bytearray()
         offset = 0
         while offset < size:
-            chunk_len = min(READMEM_CHUNK, size - offset)
+            want = min(READMEM_CHUNK, size - offset)
+            aligned = (want + 3) & ~3  # round up to a 4-byte multiple
             with self._lock:
-                data = self._read_mem_raw(addr + offset, chunk_len)
-            result.extend(data[:chunk_len])
-            offset += chunk_len
+                data = self._read_mem_raw(addr + offset, aligned)
+            result.extend(data[:want])
+            offset += want
         return bytes(result)
 
     # --- Internal Packet Methods ---
