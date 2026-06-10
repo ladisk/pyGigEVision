@@ -423,9 +423,7 @@ class GVCPClient:
                 sock.close()
 
     @staticmethod
-    def force_ip(
-        mac, ip: str, mask: str, gateway: str = "0.0.0.0", interface_ip: str = ""
-    ) -> None:
+    def force_ip(mac, ip: str, mask: str, gateway: str = "0.0.0.0", interface_ip: str = "") -> None:
         """Broadcast a GVCP FORCEIP command to assign an IP to a camera by MAC.
 
         Re-homes a camera that is on the wrong subnet (or fell back to
