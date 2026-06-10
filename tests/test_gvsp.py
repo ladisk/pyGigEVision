@@ -60,6 +60,18 @@ class TestFrameBuffer:
         assert frame_no_swap[0, 0] != frame_swapped[0, 0]
         assert frame_swapped[0, 0] == pixels[0].byteswap()
 
+    def test_assemble_writability_consistent_across_byteswap(self):
+        """Both byteswap paths must return a writable array."""
+        buf = self._make_buf(2, 2, packet_data_size=8)
+        pixels = np.array([0x0102, 0x0304, 0x0506, 0x0708], dtype=np.uint16)
+        buf.write_packet(1, pixels.tobytes())
+
+        a = buf.assemble(byteswap=False)
+        b = buf.assemble(byteswap=True)
+        assert a.flags.writeable is True
+        assert b.flags.writeable is True
+        assert a.flags.writeable == b.flags.writeable
+
     def test_assemble_mono8(self):
         """Assemble Mono8 frame."""
         buf = self._make_buf(4, 2, pixel_format=PIXEL_MONO8, packet_data_size=8)

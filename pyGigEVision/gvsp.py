@@ -210,7 +210,8 @@ class _FrameBuffer:
         numpy.ndarray or None
             2-D array of shape ``(height, width)`` with the appropriate
             ``dtype`` from :data:`PIXEL_DTYPE`, or ``None`` if the leader
-            has not been received or the dimensions are invalid.
+            has not been received or the dimensions are invalid.  The
+            returned array is always writable, on both byteswap paths.
         """
         if not self.leader_received:
             return None
@@ -227,13 +228,16 @@ class _FrameBuffer:
         expected_size = self.width * self.height * bpp
 
         if self._raw_buffer is not None:
-            raw = bytes(self._raw_buffer[:expected_size])
+            # Slicing a bytearray yields a fresh writable bytearray, so the
+            # frombuffer view below is writable with no extra copy.
+            raw: bytearray = self._raw_buffer[:expected_size]
         else:
-            raw = b"\x00" * expected_size
+            raw = bytearray(expected_size)
 
         arr = np.frombuffer(raw, dtype=dtype)
 
         if byteswap:
+            # byteswap() returns a fresh (writable) array.
             arr = arr.byteswap()
 
         try:
