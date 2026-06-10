@@ -60,6 +60,18 @@ class TestFrameBuffer:
         assert frame_no_swap[0, 0] != frame_swapped[0, 0]
         assert frame_swapped[0, 0] == pixels[0].byteswap()
 
+    def test_assemble_writability_consistent_across_byteswap(self):
+        """Both byteswap paths must return a writable array."""
+        buf = self._make_buf(2, 2, packet_data_size=8)
+        pixels = np.array([0x0102, 0x0304, 0x0506, 0x0708], dtype=np.uint16)
+        buf.write_packet(1, pixels.tobytes())
+
+        a = buf.assemble(byteswap=False)
+        b = buf.assemble(byteswap=True)
+        assert a.flags.writeable is True
+        assert b.flags.writeable is True
+        assert a.flags.writeable == b.flags.writeable
+
     def test_assemble_mono8(self):
         """Assemble Mono8 frame."""
         buf = self._make_buf(4, 2, pixel_format=PIXEL_MONO8, packet_data_size=8)
@@ -194,6 +206,40 @@ class TestFrameLifecycle:
             assert rx._frame_queue.qsize() == 1  # frame emitted
         finally:
             rx.close()
+
+
+class TestFrameComplete:
+    """The emitted metadata exposes a ``complete`` flag."""
+
+    def _drive_frame(self, missing_second_packet):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            rx._packet_data_size = 8
+            buf = _FrameBuffer(11)
+            buf.leader_received = True
+            buf.pixel_format = PIXEL_MONO16
+            buf.width, buf.height = 4, 2  # 16 bytes -> 2 packets of 8
+            buf.setup_buffer(8)
+            buf.write_packet(1, b"\x00" * 8)
+            if not missing_second_packet:
+                buf.write_packet(2, b"\x00" * 8)
+            rx._frame_buffers[11] = buf
+
+            rx._handle_trailer(11, b"")
+            _frame, info = rx._frame_queue.get_nowait()
+            return info
+        finally:
+            rx.close()
+
+    def test_complete_true_for_full_frame(self):
+        info = self._drive_frame(missing_second_packet=False)
+        assert info["missing_packets"] == 0
+        assert info["complete"] is True
+
+    def test_complete_false_for_partial_frame(self):
+        info = self._drive_frame(missing_second_packet=True)
+        assert info["missing_packets"] == 1
+        assert info["complete"] is False
 
 
 class TestResendStats:

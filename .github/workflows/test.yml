@@ -28,3 +28,15 @@ jobs:
         run: ruff format --check pyGigEVision tests
       - name: Run tests
         run: pytest -v
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install with dev extras
+        run: pip install -e ".[dev]"
+      - name: Build docs (warnings as errors)
+        run: python -m sphinx -W -b html docs/source docs/_build_ci

@@ -210,7 +210,8 @@ class _FrameBuffer:
         numpy.ndarray or None
             2-D array of shape ``(height, width)`` with the appropriate
             ``dtype`` from :data:`PIXEL_DTYPE`, or ``None`` if the leader
-            has not been received or the dimensions are invalid.
+            has not been received or the dimensions are invalid.  The
+            returned array is always writable, on both byteswap paths.
         """
         if not self.leader_received:
             return None
@@ -227,13 +228,16 @@ class _FrameBuffer:
         expected_size = self.width * self.height * bpp
 
         if self._raw_buffer is not None:
-            raw = bytes(self._raw_buffer[:expected_size])
+            # Slicing a bytearray yields a fresh writable bytearray, so the
+            # frombuffer view below is writable with no extra copy.
+            raw: bytearray = self._raw_buffer[:expected_size]
         else:
-            raw = b"\x00" * expected_size
+            raw = bytearray(expected_size)
 
         arr = np.frombuffer(raw, dtype=dtype)
 
         if byteswap:
+            # byteswap() returns a fresh (writable) array.
             arr = arr.byteswap()
 
         try:
@@ -283,9 +287,6 @@ class GVSPReceiver:
     initial_packet_timeout : float, optional
         Grace period in seconds before the first resend request is issued
         for a gap.  Default is ``0.005``.
-    packet_timeout : float, optional
-        Interval in seconds between successive resend attempts for the
-        same gap.  Default is ``0.020``.
     frame_retention : float, optional
         Maximum time in seconds to keep an incomplete frame before emitting
         it with whatever data arrived.  Default is ``0.200``.
@@ -331,7 +332,6 @@ class GVSPReceiver:
         byteswap: bool = False,
         camera_ip: str = "",
         initial_packet_timeout: float = 0.005,
-        packet_timeout: float = 0.020,
         frame_retention: float = 0.200,
     ) -> None:
         self.local_ip = local_ip
@@ -342,7 +342,6 @@ class GVSPReceiver:
 
         # Three-tier timeout strategy (aravis-inspired)
         self._initial_packet_timeout = initial_packet_timeout
-        self._packet_timeout = packet_timeout
         self._frame_retention = frame_retention
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -473,6 +472,11 @@ class GVSPReceiver:
             ``"missing_packets"``
                 Number of data packets that were not recovered before the
                 frame was emitted (int; ``0`` for perfect frames).
+            ``"complete"``
+                ``True`` when every data packet was received, ``False`` when
+                the frame was emitted with one or more packets missing (bool).
+                Equivalent to ``missing_packets == 0``; lets callers reject
+                partial, zero-filled frames without inspecting the count.
 
             Returns ``None`` if no frame arrived within *timeout*.
 
@@ -622,15 +626,17 @@ class GVSPReceiver:
         """Assemble frame and put it on the output queue."""
         frame = buf.assemble(byteswap=self.byteswap)
         if frame is not None:
+            missing_packets = max(
+                0, buf.expected_packets - buf._received_count if buf.expected_packets > 0 else 0
+            )
             info = {
                 "block_id": buf.block_id,
                 "timestamp": buf.timestamp,
                 "pixel_format": buf.pixel_format,
                 "width": buf.width,
                 "height": buf.height,
-                "missing_packets": max(
-                    0, buf.expected_packets - buf._received_count if buf.expected_packets > 0 else 0
-                ),
+                "missing_packets": missing_packets,
+                "complete": missing_packets == 0,
             }
             if self._frame_queue.full():
                 with contextlib.suppress(Empty):

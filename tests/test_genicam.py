@@ -46,3 +46,20 @@ def test_fetch_genicam_xml_zipped():
     xml, filename = fetch_genicam_xml(client)
     assert xml == inner_xml
     assert filename == "cam.xml"
+
+
+def test_parse_first_url_prefixed_hex():
+    fn, addr, size = parse_first_url(b"Local:cam.xml;0x10000;0x4000\x00")
+    assert (fn, addr, size) == ("cam.xml", 0x10000, 0x4000)
+
+
+def test_parse_first_url_bare_hex_with_letters():
+    # FLIR style: no 0x prefix, contains a-f
+    fn, addr, size = parse_first_url(b"Local:cam.zip;ff000;1a000\x00")
+    assert (fn, addr, size) == ("cam.zip", 0xFF000, 0x1A000)
+
+
+def test_parse_first_url_decimal_still_decimal():
+    # plain decimal stays decimal
+    fn, addr, size = parse_first_url(b"Local:cam.xml;4096;256\x00")
+    assert (addr, size) == (4096, 256)

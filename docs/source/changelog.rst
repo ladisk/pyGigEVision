@@ -16,6 +16,21 @@ Version 0.2.0
   when connecting.
 - Added ``GVSPReceiver.reset_resend_stats()`` to clear per-stream resend
   counters between downloads.
+- ``force_ip()`` is now available as a top-level ``pyGigEVision.force_ip``
+  and sweeps all network interfaces by default; accepts an optional
+  ``interface_ip`` argument to restrict the sweep to one interface.
+- ``pyGigEVision.standard`` is now documented as a public submodule.
+- GenICam XML download now accepts bare-hex ``FIRST_URL`` fields emitted by
+  some cameras (previously raised an error); READMEM reads are 4-byte aligned
+  per the GigE Vision spec.
+- GVSP frames returned by the receiver are now always writable (previously
+  some assembled frames were read-only).
+- Frame metadata now includes a ``complete`` flag indicating whether all
+  expected packets arrived for that frame.
+- Added a ``py.typed`` marker (PEP 561) so downstream type checkers consume
+  the inline type annotations directly.
+- CI now gates the PyPI publish workflow on tests passing and adds a
+  Sphinx ``-W`` docs-build check.
 
 Version 0.1.1
 -------------

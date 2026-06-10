@@ -38,7 +38,8 @@ def parse_first_url(url_bytes: bytes) -> tuple[str, int, int]:
     url_bytes : bytes
         Raw bytes from ``client.read_mem(REG_FIRST_URL, 512)``.  The
         string is null-terminated; everything after the first null byte
-        is ignored.
+        is ignored.  Non-ASCII trailing bytes are replaced with the
+        Unicode replacement character and then discarded by the null split.
 
     Returns
     -------
@@ -47,6 +48,10 @@ def parse_first_url(url_bytes: bytes) -> tuple[str, int, int]:
         entry name (e.g. ``"cameralib.xml"``), *addr* is the start
         address of the descriptor in camera memory, and *size* is the
         byte length.
+
+        Numeric fields accept both ``0x``-prefixed hex (``0x10000``) and
+        bare hex without a prefix (``ff000``, FLIR style), as well as plain
+        decimal integers.
 
     Raises
     ------
@@ -65,13 +70,21 @@ def parse_first_url(url_bytes: bytes) -> tuple[str, int, int]:
     >>> size
     16384
     """
-    url = url_bytes.split(b"\x00", 1)[0].decode("ascii")
+
+    def _parse_int(field: str) -> int:
+        field = field.strip()
+        try:
+            return int(field, 0)  # 0x-prefixed hex or decimal
+        except ValueError:
+            return int(field, 16)  # bare hex (FLIR style), e.g. "ff000"
+
+    url = url_bytes.split(b"\x00", 1)[0].decode("ascii", errors="replace")
     parts = url.split(";")
     if len(parts) < 3:
         raise ValueError(f"Malformed FIRST_URL: {url!r}")
     filename = parts[0].split(":")[-1]
-    addr = int(parts[1], 0)
-    size = int(parts[2], 0)
+    addr = _parse_int(parts[1])
+    size = _parse_int(parts[2])
     return filename, addr, size
 
 

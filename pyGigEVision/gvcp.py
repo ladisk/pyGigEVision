@@ -423,12 +423,18 @@ class GVCPClient:
                 sock.close()
 
     @staticmethod
-    def force_ip(mac, ip: str, mask: str, gateway: str = "0.0.0.0") -> None:
+    def force_ip(mac, ip: str, mask: str, gateway: str = "0.0.0.0", interface_ip: str = "") -> None:
         """Broadcast a GVCP FORCEIP command to assign an IP to a camera by MAC.
 
         Re-homes a camera that is on the wrong subnet (or fell back to
         link-local) without touching host NIC configuration. The camera
         reboots its IP stack, so no ACK is expected.
+
+        When *interface_ip* is empty (the default), the FORCEIP packet is
+        sent on every active host interface (mirroring :meth:`discover`),
+        because the target camera may be reachable only via a specific NIC
+        in a multi-NIC link-local setup.  When *interface_ip* is given, a
+        single socket bound to that interface is used.
 
         Parameters
         ----------
@@ -438,6 +444,10 @@ class GVCPClient:
             New IPv4 address and subnet mask for the camera.
         gateway : str, optional
             Default gateway. Default ``"0.0.0.0"`` (none).
+        interface_ip : str, optional
+            Local interface IPv4 address to bind the socket to, e.g.
+            ``"169.254.0.1"``.  Empty string (default) sweeps every active
+            interface.
 
         Notes
         -----
@@ -466,12 +476,31 @@ class GVCPClient:
             payload
         )
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            sock.sendto(pkt, ("255.255.255.255", GVCP_PORT))
-        finally:
-            sock.close()
+        # Determine which interfaces to send on, mirroring discover().
+        if interface_ip:
+            targets = [(interface_ip, _subnet_broadcasts_for(interface_ip, None))]
+        else:
+            targets = [
+                (iface_ip, _subnet_broadcasts_for(iface_ip, netmask))
+                for iface_ip, netmask in _enumerate_interfaces()
+            ]
+            if not targets:
+                targets = [("", ["255.255.255.255"])]
+
+        for bind_ip, bcasts in targets:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                if bind_ip:
+                    try:
+                        sock.bind((bind_ip, 0))
+                    except OSError:
+                        continue
+                for dest in bcasts:
+                    with contextlib.suppress(OSError):
+                        sock.sendto(pkt, (dest, GVCP_PORT))
+            finally:
+                sock.close()
 
     # --- Connection ---
 
@@ -703,6 +732,11 @@ class GVCPClient:
         Each chunk is read with the lock held, so concurrent register
         operations may interleave between chunks.
 
+        The GigE Vision spec requires every READMEM byte-count to be a
+        multiple of 4, and some cameras reject unaligned reads.  Each chunk
+        count is therefore rounded up to a 4-byte multiple on the wire and
+        the returned bytes are trimmed back to the exact *size* requested.
+
         Parameters
         ----------
         addr : int
@@ -730,11 +764,12 @@ class GVCPClient:
         result = bytearray()
         offset = 0
         while offset < size:
-            chunk_len = min(READMEM_CHUNK, size - offset)
+            want = min(READMEM_CHUNK, size - offset)
+            aligned = (want + 3) & ~3  # round up to a 4-byte multiple
             with self._lock:
-                data = self._read_mem_raw(addr + offset, chunk_len)
-            result.extend(data[:chunk_len])
-            offset += chunk_len
+                data = self._read_mem_raw(addr + offset, aligned)
+            result.extend(data[:want])
+            offset += want
         return bytes(result)
 
     # --- Internal Packet Methods ---
@@ -757,10 +792,12 @@ class GVCPClient:
         or all retries are exhausted.
 
         Stale ACKs (wrong ``ack_id``) are silently discarded.  Runt packets
-        shorter than 8 bytes are also discarded.  ``PENDING_ACK`` (command
-        code ``0x0089``) responses extend the per-attempt deadline by the
-        number of milliseconds indicated in the response payload, bounded by
-        a hard 30-second absolute deadline.
+        shorter than 8 bytes are also discarded.  A ``PENDING_ACK`` (command
+        code ``0x0089``) extends the per-attempt deadline by the number of
+        milliseconds indicated in the response payload, bounded by a hard
+        30-second absolute deadline, but only when its request id matches the
+        current command; a stale ``PENDING_ACK`` for an old command is
+        discarded like any other non-matching packet.
 
         Parameters
         ----------
@@ -807,9 +844,11 @@ class GVCPClient:
                 ack_cmd = struct.unpack(">H", data[2:4])[0]
                 ack_id = struct.unpack(">H", data[6:8])[0]
 
-                # Handle PENDING_ACK: camera needs more time
+                # Handle PENDING_ACK: camera needs more time. Only honor it
+                # when its request id matches the current command; a stale
+                # PENDING_ACK for an old command must not extend this one.
                 if ack_cmd == 0x0089:
-                    if len(data) >= 12:
+                    if ack_id == req_id and len(data) >= 12:
                         pending_ms = struct.unpack(">I", data[8:12])[0]
                         new_deadline = time.monotonic() + pending_ms / 1000.0
                         deadline = min(new_deadline, hard_deadline)
