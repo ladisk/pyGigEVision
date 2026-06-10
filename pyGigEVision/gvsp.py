@@ -477,6 +477,11 @@ class GVSPReceiver:
             ``"missing_packets"``
                 Number of data packets that were not recovered before the
                 frame was emitted (int; ``0`` for perfect frames).
+            ``"complete"``
+                ``True`` when every data packet was received, ``False`` when
+                the frame was emitted with one or more packets missing (bool).
+                Equivalent to ``missing_packets == 0``; lets callers reject
+                partial, zero-filled frames without inspecting the count.
 
             Returns ``None`` if no frame arrived within *timeout*.
 
@@ -626,15 +631,17 @@ class GVSPReceiver:
         """Assemble frame and put it on the output queue."""
         frame = buf.assemble(byteswap=self.byteswap)
         if frame is not None:
+            missing_packets = max(
+                0, buf.expected_packets - buf._received_count if buf.expected_packets > 0 else 0
+            )
             info = {
                 "block_id": buf.block_id,
                 "timestamp": buf.timestamp,
                 "pixel_format": buf.pixel_format,
                 "width": buf.width,
                 "height": buf.height,
-                "missing_packets": max(
-                    0, buf.expected_packets - buf._received_count if buf.expected_packets > 0 else 0
-                ),
+                "missing_packets": missing_packets,
+                "complete": missing_packets == 0,
             }
             if self._frame_queue.full():
                 with contextlib.suppress(Empty):

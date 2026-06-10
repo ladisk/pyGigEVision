@@ -208,6 +208,40 @@ class TestFrameLifecycle:
             rx.close()
 
 
+class TestFrameComplete:
+    """The emitted metadata exposes a ``complete`` flag."""
+
+    def _drive_frame(self, missing_second_packet):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            rx._packet_data_size = 8
+            buf = _FrameBuffer(11)
+            buf.leader_received = True
+            buf.pixel_format = PIXEL_MONO16
+            buf.width, buf.height = 4, 2  # 16 bytes -> 2 packets of 8
+            buf.setup_buffer(8)
+            buf.write_packet(1, b"\x00" * 8)
+            if not missing_second_packet:
+                buf.write_packet(2, b"\x00" * 8)
+            rx._frame_buffers[11] = buf
+
+            rx._handle_trailer(11, b"")
+            _frame, info = rx._frame_queue.get_nowait()
+            return info
+        finally:
+            rx.close()
+
+    def test_complete_true_for_full_frame(self):
+        info = self._drive_frame(missing_second_packet=False)
+        assert info["missing_packets"] == 0
+        assert info["complete"] is True
+
+    def test_complete_false_for_partial_frame(self):
+        info = self._drive_frame(missing_second_packet=True)
+        assert info["missing_packets"] == 1
+        assert info["complete"] is False
+
+
 class TestResendStats:
     """Resend recovery accounting and per-download reset."""
 
