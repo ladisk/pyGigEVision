@@ -423,12 +423,20 @@ class GVCPClient:
                 sock.close()
 
     @staticmethod
-    def force_ip(mac, ip: str, mask: str, gateway: str = "0.0.0.0") -> None:
+    def force_ip(
+        mac, ip: str, mask: str, gateway: str = "0.0.0.0", interface_ip: str = ""
+    ) -> None:
         """Broadcast a GVCP FORCEIP command to assign an IP to a camera by MAC.
 
         Re-homes a camera that is on the wrong subnet (or fell back to
         link-local) without touching host NIC configuration. The camera
         reboots its IP stack, so no ACK is expected.
+
+        When *interface_ip* is empty (the default), the FORCEIP packet is
+        sent on every active host interface (mirroring :meth:`discover`),
+        because the target camera may be reachable only via a specific NIC
+        in a multi-NIC link-local setup.  When *interface_ip* is given, a
+        single socket bound to that interface is used.
 
         Parameters
         ----------
@@ -438,6 +446,10 @@ class GVCPClient:
             New IPv4 address and subnet mask for the camera.
         gateway : str, optional
             Default gateway. Default ``"0.0.0.0"`` (none).
+        interface_ip : str, optional
+            Local interface IPv4 address to bind the socket to, e.g.
+            ``"169.254.0.1"``.  Empty string (default) sweeps every active
+            interface.
 
         Notes
         -----
@@ -466,12 +478,31 @@ class GVCPClient:
             payload
         )
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-            sock.sendto(pkt, ("255.255.255.255", GVCP_PORT))
-        finally:
-            sock.close()
+        # Determine which interfaces to send on, mirroring discover().
+        if interface_ip:
+            targets = [(interface_ip, _subnet_broadcasts_for(interface_ip, None))]
+        else:
+            targets = [
+                (iface_ip, _subnet_broadcasts_for(iface_ip, netmask))
+                for iface_ip, netmask in _enumerate_interfaces()
+            ]
+            if not targets:
+                targets = [("", ["255.255.255.255"])]
+
+        for bind_ip, bcasts in targets:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                if bind_ip:
+                    try:
+                        sock.bind((bind_ip, 0))
+                    except OSError:
+                        continue
+                for dest in bcasts:
+                    with contextlib.suppress(OSError):
+                        sock.sendto(pkt, (dest, GVCP_PORT))
+            finally:
+                sock.close()
 
     # --- Connection ---
 
