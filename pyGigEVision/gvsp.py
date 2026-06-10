@@ -287,11 +287,6 @@ class GVSPReceiver:
     initial_packet_timeout : float, optional
         Grace period in seconds before the first resend request is issued
         for a gap.  Default is ``0.005``.
-    packet_timeout : float, optional
-        Maximum inter-packet silence in seconds for an in-progress frame.
-        When no new packet arrives for this long and data packets are still
-        missing, the frame is finalized and emitted with whatever arrived
-        (typically shorter than *frame_retention*).  Default is ``0.020``.
     frame_retention : float, optional
         Maximum time in seconds to keep an incomplete frame before emitting
         it with whatever data arrived.  Default is ``0.200``.
@@ -337,7 +332,6 @@ class GVSPReceiver:
         byteswap: bool = False,
         camera_ip: str = "",
         initial_packet_timeout: float = 0.005,
-        packet_timeout: float = 0.020,
         frame_retention: float = 0.200,
     ) -> None:
         self.local_ip = local_ip
@@ -348,7 +342,6 @@ class GVSPReceiver:
 
         # Three-tier timeout strategy (aravis-inspired)
         self._initial_packet_timeout = initial_packet_timeout
-        self._packet_timeout = packet_timeout
         self._frame_retention = frame_retention
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -658,8 +651,6 @@ class GVSPReceiver:
         Called every ``_GAP_CHECK_EVERY`` received packets and on socket
         timeouts.
         - Requests resend for packets missing longer than initial_packet_timeout
-        - Finalizes an in-progress frame after packet_timeout of inter-packet
-          silence when data packets are still missing
         - Emits or drops frames older than frame_retention
         """
         now = time.monotonic()
@@ -674,21 +665,6 @@ class GVSPReceiver:
                 since_last > self._frame_retention
                 and buf.leader_received
                 and (buf.trailer_received or age > self._frame_retention * 2)
-            ):
-                self._emit_frame(buf)
-                to_remove.append(block_id)
-                continue
-
-            # Inter-packet timeout: if a frame has been silent for longer than
-            # packet_timeout but still has missing data packets, stop waiting
-            # and finalize it with whatever arrived. Bounds the stall a single
-            # lost packet can cause without holding the frame for the full
-            # frame_retention window.
-            if (
-                buf.leader_received
-                and buf.expected_packets > 0
-                and since_last > self._packet_timeout
-                and buf.missing_packets()
             ):
                 self._emit_frame(buf)
                 to_remove.append(block_id)

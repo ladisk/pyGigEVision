@@ -27,9 +27,6 @@ Version 0.2.0
   some assembled frames were read-only).
 - Frame metadata now includes a ``complete`` flag indicating whether all
   expected packets arrived for that frame.
-- ``GVSPReceiver`` now finalizes an incomplete in-progress frame after
-  ``packet_timeout`` seconds of inter-packet silence (default 0.020 s),
-  bounding the stall on packet loss.
 - Added a ``py.typed`` marker (PEP 561) so downstream type checkers consume
   the inline type annotations directly.
 - CI now gates the PyPI publish workflow on tests passing and adds a
