@@ -794,10 +794,12 @@ class GVCPClient:
         or all retries are exhausted.
 
         Stale ACKs (wrong ``ack_id``) are silently discarded.  Runt packets
-        shorter than 8 bytes are also discarded.  ``PENDING_ACK`` (command
-        code ``0x0089``) responses extend the per-attempt deadline by the
-        number of milliseconds indicated in the response payload, bounded by
-        a hard 30-second absolute deadline.
+        shorter than 8 bytes are also discarded.  A ``PENDING_ACK`` (command
+        code ``0x0089``) extends the per-attempt deadline by the number of
+        milliseconds indicated in the response payload, bounded by a hard
+        30-second absolute deadline, but only when its request id matches the
+        current command; a stale ``PENDING_ACK`` for an old command is
+        discarded like any other non-matching packet.
 
         Parameters
         ----------
@@ -844,9 +846,11 @@ class GVCPClient:
                 ack_cmd = struct.unpack(">H", data[2:4])[0]
                 ack_id = struct.unpack(">H", data[6:8])[0]
 
-                # Handle PENDING_ACK: camera needs more time
+                # Handle PENDING_ACK: camera needs more time. Only honor it
+                # when its request id matches the current command; a stale
+                # PENDING_ACK for an old command must not extend this one.
                 if ack_cmd == 0x0089:
-                    if len(data) >= 12:
+                    if ack_id == req_id and len(data) >= 12:
                         pending_ms = struct.unpack(">I", data[8:12])[0]
                         new_deadline = time.monotonic() + pending_ms / 1000.0
                         deadline = min(new_deadline, hard_deadline)

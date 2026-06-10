@@ -311,13 +311,14 @@ class TestSendCmdPendingAck:
     """Test PENDING_ACK handling."""
 
     def test_pending_ack_extends_deadline(self):
-        """PENDING_ACK (0x0089) extends the wait, then real ACK arrives."""
+        """A matching-id PENDING_ACK (0x0089) extends the wait; real ACK arrives."""
         client = _client_with_mock_socket()
         client._cmd_timeout = 0.1
 
-        # PENDING_ACK: ack_cmd=0x0089, extra 4 bytes = timeout in ms
+        # PENDING_ACK: ack_cmd=0x0089, extra 4 bytes = timeout in ms.
+        # ack_id matches the current request (1), so it is honored.
         pending_timeout_ms = 2000
-        pending_ack = _make_ack(STATUS_SUCCESS, 0x0089, 4, 0, struct.pack(">I", pending_timeout_ms))
+        pending_ack = _make_ack(STATUS_SUCCESS, 0x0089, 4, 1, struct.pack(">I", pending_timeout_ms))
 
         good_ack = _make_readreg_ack(ack_id=1, value=0x42)
 
@@ -330,6 +331,70 @@ class TestSendCmdPendingAck:
 
         result = client._read_reg_raw(0xD300)
         assert result == 0x42
+
+    def test_stale_pending_ack_is_discarded(self):
+        """A PENDING_ACK with a non-matching id is discarded; matching ACK wins."""
+        client = _client_with_mock_socket()
+        client._cmd_timeout = 0.5
+
+        # Stale PENDING_ACK: ack_id=99 != current req_id (1). It must be
+        # ignored just like any other non-matching packet.
+        stale_pending = _make_ack(STATUS_SUCCESS, 0x0089, 4, 99, struct.pack(">I", 60000))
+        good_ack = _make_readreg_ack(ack_id=1, value=0xABCDEF01)
+
+        client._sock.recvfrom = MagicMock(
+            side_effect=[
+                (stale_pending, ("192.168.1.1", 3956)),
+                (good_ack, ("192.168.1.1", 3956)),
+            ]
+        )
+
+        result = client._read_reg_raw(0xD300)
+        assert result == 0xABCDEF01
+        assert client._sock.recvfrom.call_count == 2
+
+    def test_stale_pending_ack_does_not_extend_deadline(self, monkeypatch):
+        """A stale PENDING_ACK must NOT extend the per-attempt deadline.
+
+        Uses a controllable monotonic clock. The stale PENDING_ACK carries a
+        huge pending window; a matching ACK is only made available after the
+        clock has advanced past the ORIGINAL short deadline. With the id
+        check in place the stale PENDING_ACK is discarded (deadline not
+        extended) so the attempt times out before the matching ACK is read.
+        Without the fix, the deadline is extended and the matching ACK would
+        be consumed, so this test fails on the buggy implementation.
+        """
+        import pyGigEVision.gvcp as gvcp_mod
+
+        # Controllable clock: each read advances by 0.02 s.
+        clock = {"t": 0.0}
+
+        def fake_monotonic():
+            clock["t"] += 0.02
+            return clock["t"]
+
+        monkeypatch.setattr(gvcp_mod.time, "monotonic", fake_monotonic)
+
+        client = _client_with_mock_socket()
+        client._n_retries = 1
+        client._cmd_timeout = 0.05  # original deadline ~0.05 s after send
+
+        # Stale PENDING_ACK with a 60 s pending window (id 99 != req_id 1).
+        stale_pending = _make_ack(STATUS_SUCCESS, 0x0089, 4, 99, struct.pack(">I", 60000))
+        # A matching ACK that would only be honored if the deadline were
+        # (wrongly) extended; the clock will have run past the short deadline
+        # before this would be consumed.
+        good_ack = _make_readreg_ack(ack_id=1, value=0xCAFEBABE)
+
+        client._sock.recvfrom = MagicMock(
+            side_effect=[
+                (stale_pending, ("192.168.1.1", 3956)),
+                (good_ack, ("192.168.1.1", 3956)),
+            ]
+        )
+
+        with pytest.raises(GVCPError, match="Timeout"):
+            client._read_reg_raw(0xD300)
 
 
 class TestHeartbeatControlLoss:
