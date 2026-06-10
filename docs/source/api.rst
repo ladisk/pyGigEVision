@@ -17,8 +17,10 @@ full documentation:
 * :func:`~pyGigEVision.genicam.fetch_genicam_xml`, :func:`~pyGigEVision.genicam.parse_first_url` (from :mod:`pyGigEVision.genicam`)
 * :func:`~pyGigEVision.bootstrap.bootstrap` (from :mod:`pyGigEVision.bootstrap`)
 
-``pyGigEVision.discover`` is also a top-level alias for
-:meth:`~pyGigEVision.gvcp.GVCPClient.discover`.
+``pyGigEVision.discover`` and ``pyGigEVision.force_ip`` are top-level aliases for
+:meth:`~pyGigEVision.gvcp.GVCPClient.discover` and
+:meth:`~pyGigEVision.gvcp.GVCPClient.force_ip` respectively.
+``pyGigEVision.standard`` is the public submodule of GigE Vision register constants.
 
 Control protocol (GVCP)
 -----------------------
