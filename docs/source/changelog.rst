@@ -1,6 +1,13 @@
 Changelog
 =========
 
+Version 0.2.1
+-------------
+
+- First release published to PyPI. Identical in content to 0.2.0, which
+  was tagged but not published because the release pipeline was not yet
+  configured.
+
 Version 0.2.0
 -------------
 
