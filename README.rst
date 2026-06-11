@@ -1,3 +1,7 @@
+.. image:: logo.png
+   :align: center
+   :alt: pyGigEVision logo
+
 pyGigEVision
 ============
 
