@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pyGigEVision"
-version = "0.2.0"
+version = "0.2.1"
 description = "Pure-Python implementation of the GigE Vision protocol (GVCP + GVSP)."
 license = "MIT"
 requires-python = ">=3.10"
