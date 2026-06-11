@@ -1,4 +1,4 @@
-"""Tests for fetch_genicam_xml — mocks GVCPClient.read_mem."""
+"""Tests for fetch_genicam_xml â€” mocks GVCPClient.read_mem."""
 
 import io
 import zipfile
@@ -54,7 +54,7 @@ def test_parse_first_url_prefixed_hex():
 
 
 def test_parse_first_url_bare_hex_with_letters():
-    # FLIR style: no 0x prefix, contains a-f
+    # bare-hex style: no 0x prefix, contains a-f
     fn, addr, size = parse_first_url(b"Local:cam.zip;ff000;1a000\x00")
     assert (fn, addr, size) == ("cam.zip", 0xFF000, 0x1A000)
 

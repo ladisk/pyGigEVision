@@ -50,8 +50,8 @@ def parse_first_url(url_bytes: bytes) -> tuple[str, int, int]:
         byte length.
 
         Numeric fields accept both ``0x``-prefixed hex (``0x10000``) and
-        bare hex without a prefix (``ff000``, FLIR style), as well as plain
-        decimal integers.
+        bare hex without a prefix (``ff000``, emitted by some cameras), as
+        well as plain decimal integers.
 
     Raises
     ------
@@ -76,7 +76,7 @@ def parse_first_url(url_bytes: bytes) -> tuple[str, int, int]:
         try:
             return int(field, 0)  # 0x-prefixed hex or decimal
         except ValueError:
-            return int(field, 16)  # bare hex (FLIR style), e.g. "ff000"
+            return int(field, 16)  # bare hex without a prefix, e.g. "ff000"
 
     url = url_bytes.split(b"\x00", 1)[0].decode("ascii", errors="replace")
     parts = url.split(";")

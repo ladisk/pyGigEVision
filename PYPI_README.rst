@@ -18,3 +18,8 @@ Installation
     pip install pyGigEVision
 
 License: MIT.
+
+``pyGigEVision`` is an independent project and is not affiliated with,
+endorsed by, or sponsored by the AIA (Association for Advancing
+Automation) or any camera manufacturer. "GigE Vision" is a registered
+trademark of the AIA.
