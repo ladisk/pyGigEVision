@@ -65,6 +65,8 @@ Projects using pyGigEVision
 
 - `pyTelops <https://github.com/ladisk/pyTelops>`_ - driver for Telops
   infrared cameras.
+- `pyFlir <https://github.com/LolloCappo/pyFlir>`_ - driver for FLIR
+  cameras.
 
 Status
 ------

@@ -24,8 +24,8 @@ Quickstart
 
 See :doc:`getting_started` for a step-by-step introduction.
 
-Vendor drivers such as ``pyTelops`` (Telops infrared cameras) build on
-this protocol layer.
+Vendor drivers such as ``pyTelops`` (Telops infrared cameras) and
+``pyFlir`` (FLIR cameras) build on this protocol layer.
 
 Contents
 --------
