@@ -95,7 +95,9 @@ vendor-specific and discovered from the camera's GenICam XML.
 
 For a turn-key driver for a specific camera, you would either:
 
-* Use a vendor-specific package built on top of ``pyGigEVision``.
+* Use a vendor-specific package built on top of ``pyGigEVision``
+  (for example ``pyTelops`` for Telops cameras or ``pyFlir`` for FLIR
+  cameras).
 * Write your own thin vendor layer that parses the GenICam XML and
   wraps the relevant registers. See the :doc:`examples` page for a
   starting point.

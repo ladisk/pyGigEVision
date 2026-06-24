@@ -12,7 +12,9 @@ GigE Vision compliant camera.
    "start acquisition" command) filled in to actually trigger a frame.
    pyGigEVision is the protocol layer, not a turn-key camera
    abstraction. Use ``02_bootstrap_and_xml.py`` to download your
-   camera's GenICam XML and look up the right address.
+   camera's GenICam XML and look up the right address. For a complete,
+   turn-key driver built on this protocol layer, see how ``pyTelops``
+   (Telops cameras) or ``pyFlir`` (FLIR cameras) wrap it.
 
 01_discover.py: Discover cameras
 ---------------------------------
