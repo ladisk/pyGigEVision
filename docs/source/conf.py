@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.abspath("../.."))
 project = "pyGigEVision"
 author = "Jaša Šonc, Janko Slavič, Lorenzo Capponi"
 copyright = "2026, Jaša Šonc and Ladisk group, University of Ljubljana"
-release = "0.2.1"
+release = "0.2.2"
 # -- General configuration ---------------------------------------------------
 extensions = [
     "sphinx.ext.autodoc",
