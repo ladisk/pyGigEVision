@@ -1,8 +1,8 @@
 Changelog
 =========
 
-Version 0.2.2 (unreleased)
---------------------------
+Version 0.2.2
+-------------
 
 - Added ``GVSPReceiver.flush()`` to discard residual state from a prior stream
   session: it drops any assembled frames still on the output queue, clears
