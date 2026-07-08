@@ -502,6 +502,47 @@ class GVSPReceiver:
         """
         self._resend_stats = {"requested": 0, "recovered": 0, "failed": 0}
 
+    def flush(self) -> int:
+        """Discard residual frames and unread datagrams from a prior session.
+
+        Drops every assembled frame still on the output queue, all partially
+        assembled frame buffers, and any datagrams sitting unread in the OS
+        socket receive buffer.
+
+        A GVSP block id restarts at 1 on each stream session, so a frame left
+        over from a previous session -- assembled-but-unconsumed, or still
+        buffered in the 16 MB socket receive buffer while the receiver thread
+        was behind -- would be read first on the next session and misattributed
+        to the wrong frame. Call this at a session boundary **with the receiver
+        thread stopped**: the socket drain assumes no concurrent reader. Then
+        :meth:`start` to begin a clean session.
+
+        Returns
+        -------
+        int
+            Number of assembled frames dropped from the output queue.
+        """
+        dropped = 0
+        while True:
+            try:
+                self._frame_queue.get_nowait()
+                dropped += 1
+            except Empty:
+                break
+        self._frame_buffers.clear()
+        # Drain the OS socket receive buffer without blocking, then restore the
+        # loop's short read timeout.
+        self._sock.setblocking(False)
+        try:
+            while True:
+                try:
+                    self._sock.recv(65536)
+                except (BlockingIOError, OSError):
+                    break
+        finally:
+            self._sock.settimeout(0.05)
+        return dropped
+
     # --- Internal ---
 
     def _receive_loop(self) -> None:

@@ -1,6 +1,18 @@
 Changelog
 =========
 
+Version 0.2.2 (unreleased)
+--------------------------
+
+- Added ``GVSPReceiver.flush()`` to discard residual state from a prior stream
+  session: it drops any assembled frames still on the output queue, clears
+  partially assembled frame buffers, and drains unread datagrams from the OS
+  socket receive buffer, returning the number of queued frames dropped. GVSP
+  block ids restart at 1 each session, so a frame left over from a previous
+  session (e.g. queued while the receiver thread was behind under host load)
+  would otherwise be read first on the next session and misattributed. Call it
+  at a session boundary with the receiver thread stopped, then ``start()``.
+
 Version 0.2.1
 -------------
 
