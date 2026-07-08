@@ -4,6 +4,7 @@ Tests frame buffer logic and packet parsing without a physical camera.
 """
 
 import numpy as np
+import pytest
 
 from pyGigEVision.gvsp import (
     PIXEL_BPP,
@@ -277,6 +278,51 @@ class TestResendStats:
             rx.reset_resend_stats()
 
             assert rx._resend_stats == {"requested": 0, "recovered": 0, "failed": 0}
+        finally:
+            rx.close()
+
+
+class TestFlush:
+    """flush() must discard residue so a new stream session starts clean.
+
+    A GVSP block id restarts at 1 each stream session; a frame left over from
+    a previous session (assembled-but-unconsumed, or unread in the OS socket
+    buffer) would be read first on the next session and mapped to the wrong
+    position. Neither stop() nor start() drains the queue/socket, so a dedicated
+    flush is needed at the session boundary.
+    """
+
+    def test_flush_drops_queued_frames_and_socket_backlog(self):
+        import socket
+
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            # An assembled frame waiting to be consumed, and a half-assembled one.
+            rx._frame_queue.put((np.zeros((2, 2), np.uint16), {"block_id": 5}))
+            rx._frame_buffers[5] = _FrameBuffer(5)
+
+            # Unread datagrams sitting in the OS socket receive buffer.
+            sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            for _ in range(3):
+                sender.sendto(b"\x00" * 64, ("127.0.0.1", rx.port))
+            sender.close()
+
+            dropped = rx.flush()
+
+            assert dropped == 1  # the one queued frame
+            assert rx._frame_queue.qsize() == 0
+            assert rx._frame_buffers == {}
+            # Socket drained: a further read finds nothing (times out / would block).
+            with pytest.raises((BlockingIOError, socket.timeout, OSError)):
+                rx._sock.recv(65536)
+        finally:
+            rx.close()
+
+    def test_flush_on_empty_receiver_is_noop(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            assert rx.flush() == 0
+            assert rx._frame_queue.qsize() == 0
         finally:
             rx.close()
 
