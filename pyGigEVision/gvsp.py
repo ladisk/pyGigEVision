@@ -285,6 +285,9 @@ class GVSPReceiver:
         IPv4 address of the camera, used as the destination for direct
         resend requests.  Falls back to ``gvcp_client.camera_ip`` when
         *gvcp_client* is supplied.  Leave empty to disable resends.
+    camera_port : int, optional
+        GevSCSP port used to send a dummy packet to the camera first,
+        to bypass firewall filtering in MacOS.
     initial_packet_timeout : float, optional
         Grace period in seconds before the first resend request is issued
         for a gap.  Default is ``0.005``.
@@ -332,6 +335,7 @@ class GVSPReceiver:
         packet_size: int = 1500,
         byteswap: bool = False,
         camera_ip: str = "",
+        camera_port: int = None,
         initial_packet_timeout: float = 0.005,
         frame_retention: float = 0.200,
     ) -> None:
@@ -350,6 +354,10 @@ class GVSPReceiver:
             self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
         self._sock.bind((local_ip, local_port))
         self._sock.settimeout(0.05)  # short timeout for responsive gap checking
+
+        # MacOS firewall incoming connections filter jump
+        if self._camera_ip is not None and camera_port is not None:
+            self._sock.sendto(b"\x00", (self._camera_ip, camera_port))
 
         self._port = self._sock.getsockname()[1]
         self._frame_queue: Queue[tuple[np.ndarray, dict]] = Queue(maxsize=max_queue)
