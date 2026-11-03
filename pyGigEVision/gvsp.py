@@ -86,6 +86,9 @@ _GVCP_CMD_PACKETRESEND = 0x0040
 # sustains line rate under host CPU contention.
 _GAP_CHECK_EVERY = 128
 
+# Max pixels sanity check
+_MAX_PIXELS = 2448 * 2048
+
 
 class _FrameBuffer:
     """Accumulate packets for a single in-flight frame.
@@ -137,8 +140,7 @@ class _FrameBuffer:
         if self.width <= 0 or self.height <= 0:
             return
 
-        max_pixels = 2048 * 2048
-        if self.width * self.height > max_pixels:
+        if self.width * self.height > _MAX_PIXELS:
             logger.warning(
                 f"Frame {self.block_id}: invalid dimensions {self.width}x{self.height}, skipping"
             )
@@ -219,8 +221,7 @@ class _FrameBuffer:
         if self.width <= 0 or self.height <= 0:
             return None
 
-        max_pixels = 2048 * 2048
-        if self.width * self.height > max_pixels:
+        if self.width * self.height > _MAX_PIXELS:
             return None
 
         bpp = PIXEL_BPP.get(self.pixel_format, 2)
