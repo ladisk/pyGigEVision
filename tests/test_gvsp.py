@@ -393,9 +393,7 @@ class TestFirewallPacket:
 
     def test_port_read_from_register_and_resent_on_start(self):
         cam = self._fake_camera()
-        rx = GVSPReceiver(
-            local_ip="127.0.0.1", gvcp_client=_FakeGvcp(scsp=cam.getsockname()[1])
-        )
+        rx = GVSPReceiver(local_ip="127.0.0.1", gvcp_client=_FakeGvcp(scsp=cam.getsockname()[1]))
         try:
             cam.recvfrom(16)
             rx.start()
