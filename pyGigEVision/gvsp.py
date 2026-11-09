@@ -85,6 +85,8 @@ _GVCP_CMD_PACKETRESEND = 0x0040
 # every socket timeout). Bounds the per-packet cost of the receive loop so it
 # sustains line rate under host CPU contention.
 _GAP_CHECK_EVERY = 128
+_GEV_SCSP = 0x0D1C  # stream channel source port register
+_FIREWALL_PACKET_INTERVAL = 10.0  # seconds between firewall packets
 
 # Max pixels sanity check
 _MAX_PIXELS = 2448 * 2048
@@ -286,8 +288,10 @@ class GVSPReceiver:
         resend requests.  Falls back to ``gvcp_client.camera_ip`` when
         *gvcp_client* is supplied.  Leave empty to disable resends.
     camera_port : int, optional
-        GevSCSP port used to send a dummy packet to the camera first,
-        to bypass firewall filtering in MacOS.
+        GevSCSP port of the camera.  A dummy packet is sent to it from the
+        stream socket (on creation, on ``start()`` and every 10 s) so that
+        the host firewall admits the stream.  Defaults to the GevSCSP register
+        (0x0D1C) read through *gvcp_client*; skipped when unknown.
     initial_packet_timeout : float, optional
         Grace period in seconds before the first resend request is issued
         for a gap.  Default is ``0.005``.
@@ -335,7 +339,7 @@ class GVSPReceiver:
         packet_size: int = 1500,
         byteswap: bool = False,
         camera_ip: str = "",
-        camera_port: int = None,
+        camera_port: int | None = None,
         initial_packet_timeout: float = 0.005,
         frame_retention: float = 0.200,
     ) -> None:
@@ -355,9 +359,11 @@ class GVSPReceiver:
         self._sock.bind((local_ip, local_port))
         self._sock.settimeout(0.05)  # short timeout for responsive gap checking
 
-        # MacOS firewall incoming connections filter jump
-        if self._camera_ip is not None and camera_port is not None:
-            self._sock.sendto(b"\x00", (self._camera_ip, camera_port))
+        self._camera_port = camera_port
+        if self._camera_port is None and gvcp_client is not None:
+            self._camera_port = self._read_stream_source_port(gvcp_client)
+        self._last_firewall_packet = 0.0
+        self._send_firewall_packet()
 
         self._port = self._sock.getsockname()[1]
         self._frame_queue: Queue[tuple[np.ndarray, dict]] = Queue(maxsize=max_queue)
@@ -399,6 +405,7 @@ class GVSPReceiver:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
+        self._send_firewall_packet()
         self._thread = threading.Thread(target=self._receive_loop, daemon=True)
         self._thread.start()
 
@@ -554,16 +561,43 @@ class GVSPReceiver:
 
     # --- Internal ---
 
+    @staticmethod
+    def _read_stream_source_port(gvcp_client: object) -> int | None:
+        """Read GevSCSP (0x0D1C); the register is optional, so failure gives None."""
+        try:
+            port = gvcp_client.read_reg(_GEV_SCSP) & 0xFFFF
+        except Exception:
+            return None
+        return port or None
+
+    def _send_firewall_packet(self) -> None:
+        """Send a dummy packet to the camera stream source port.
+
+        Opens the host firewall (macOS, Windows) for the camera's stream
+        packets, like the firewall traversal of Basler pylon.  Skipped when
+        the camera address or port is unknown; send errors are ignored.
+        """
+        self._last_firewall_packet = time.monotonic()
+        if self._camera_ip and self._camera_port:
+            with contextlib.suppress(OSError):
+                self._sock.sendto(b"\x00", (self._camera_ip, self._camera_port))
+
     def _receive_loop(self) -> None:
         """Main receiver loop with real-time gap detection."""
         since_check = 0
         while not self._stop_event.is_set():
+            if time.monotonic() - self._last_firewall_packet >= _FIREWALL_PACKET_INTERVAL:
+                self._send_firewall_packet()
             try:
                 data, addr = self._sock.recvfrom(65536)
             except TimeoutError:
                 # No packet received; check for gaps and stale frames
                 self._check_gaps_and_timeouts()
                 since_check = 0
+                continue
+            except ConnectionResetError:
+                # Windows reports an ICMP port-unreachable (e.g. for the
+                # firewall packet) as an error on the next recvfrom.
                 continue
             except OSError:
                 break

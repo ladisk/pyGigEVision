@@ -3,6 +3,9 @@
 Tests frame buffer logic and packet parsing without a physical camera.
 """
 
+import socket
+import time
+
 import numpy as np
 import pytest
 
@@ -341,3 +344,89 @@ class TestPixelFormats:
     def test_all_formats_have_bpp_and_dtype(self):
         for fmt in PIXEL_BPP:
             assert fmt in PIXEL_DTYPE
+
+
+class _FakeGvcp:
+    def __init__(self, ip="127.0.0.1", scsp=None):
+        self.camera_ip = ip
+        self._scsp = scsp
+
+    def read_reg(self, addr):
+        if self._scsp is None:
+            raise OSError("register not readable")
+        assert addr == 0x0D1C
+        return 0xABCD0000 | self._scsp
+
+
+class TestFirewallPacket:
+    @staticmethod
+    def _fake_camera():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.settimeout(2.0)
+        return sock
+
+    def test_packet_sent_from_receiver_port(self):
+        cam = self._fake_camera()
+        rx = GVSPReceiver(
+            local_ip="127.0.0.1", camera_ip="127.0.0.1", camera_port=cam.getsockname()[1]
+        )
+        try:
+            data, addr = cam.recvfrom(16)
+            assert data == b"\x00"
+            assert addr[1] == rx.port
+        finally:
+            rx.close()
+            cam.close()
+
+    def test_no_packet_without_camera_ip(self):
+        cam = self._fake_camera()
+        cam.settimeout(0.2)
+        rx = GVSPReceiver(local_ip="127.0.0.1", camera_port=cam.getsockname()[1])
+        try:
+            rx.start()
+            with pytest.raises(socket.timeout):
+                cam.recvfrom(16)
+        finally:
+            rx.close()
+            cam.close()
+
+    def test_port_read_from_register_and_resent_on_start(self):
+        cam = self._fake_camera()
+        rx = GVSPReceiver(
+            local_ip="127.0.0.1", gvcp_client=_FakeGvcp(scsp=cam.getsockname()[1])
+        )
+        try:
+            cam.recvfrom(16)
+            rx.start()
+            data, _ = cam.recvfrom(16)
+            assert data == b"\x00"
+        finally:
+            rx.close()
+            cam.close()
+
+    def test_unreadable_register_skips_packet(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1", gvcp_client=_FakeGvcp(scsp=None))
+        try:
+            assert rx._camera_port is None
+        finally:
+            rx.close()
+
+    def test_explicit_port_overrides_register(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1", gvcp_client=_FakeGvcp(scsp=1111), camera_port=2222)
+        try:
+            assert rx._camera_port == 2222
+        finally:
+            rx.close()
+
+    def test_closed_port_does_not_stop_receive_loop(self):
+        dead = self._fake_camera()
+        port = dead.getsockname()[1]
+        dead.close()
+        rx = GVSPReceiver(local_ip="127.0.0.1", camera_ip="127.0.0.1", camera_port=port)
+        try:
+            rx.start()
+            time.sleep(0.3)
+            assert rx._thread.is_alive()
+        finally:
+            rx.close()
