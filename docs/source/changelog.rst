@@ -1,20 +1,22 @@
 Changelog
 =========
 
-Unreleased
-----------
+Version 0.2.3
+-------------
 
-- `GVSPReceiver` now sends a one-byte dummy packet from the stream socket to
+- Raised the frame size limit in ``GVSPReceiver`` from 2048x2048 to 2448x2048
+  pixels (5 MP). The limit is now a single module constant,
+  ``pyGigEVision.gvsp._MAX_PIXELS``. Thanks to @jacob-amodo.
+- ``GVSPReceiver`` now sends a one-byte dummy packet from the stream socket to
   the camera's stream source port (GevSCSP, register 0x0D1C, read through
-  `gvcp_client` unless `camera_port` is given), so that stateful host
+  ``gvcp_client`` unless ``camera_port`` is given), so that stateful host
   firewalls (macOS, Windows group-policy firewalls) treat the incoming stream
   as a reply to an outgoing flow, like Basler pylon's firewall traversal. The
-  packet is sent on creation, on `start()` and every 10 s; it is skipped if
+  packet is sent on creation, on ``start()`` and every 10 s; it is skipped if
   the camera address or port is unknown, the register is unreadable or the
   send fails. On Windows, an ICMP port-unreachable answer no longer ends the
-  receive loop (`ConnectionResetError` is ignored). Thanks to @jacob-amodo
+  receive loop (``ConnectionResetError`` is ignored). Thanks to @jacob-amodo
   for the original fix.
-
 
 Version 0.2.2
 -------------
