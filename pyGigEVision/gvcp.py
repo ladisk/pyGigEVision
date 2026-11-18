@@ -247,13 +247,6 @@ class GVCPClient:
         it raises are logged and do not stop the heartbeat.  Default is
         ``None``.
 
-    Attributes
-    ----------
-    control_lost : bool
-        ``True`` after the heartbeat sees the control bit cleared in
-        ``REG_CCP``.  Reset by :meth:`connect`.  Heartbeat network errors
-        do not set it.
-
     Notes
     -----
     The constructor does not perform any network I/O.  Call
