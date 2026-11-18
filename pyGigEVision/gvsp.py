@@ -32,6 +32,7 @@ pyGigEVision.gvcp : The control counterpart (GVCP).
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import math
 import socket
@@ -90,6 +91,87 @@ _FIREWALL_PACKET_INTERVAL = 10.0  # seconds between firewall packets
 
 # Max pixels sanity check
 _MAX_PIXELS = 2448 * 2048
+
+
+@dataclasses.dataclass(frozen=True)
+class StreamStats:
+    """Snapshot of the stream counters of a :class:`GVSPReceiver`.
+
+    Get a snapshot with :attr:`GVSPReceiver.stats`. Counters start at zero
+    and grow until :meth:`GVSPReceiver.reset_stats` is called.
+
+    Parameters
+    ----------
+    packets_received : int
+        Datagrams of at least 8 bytes read from the socket.
+    frames_emitted : int
+        Frames put on the output queue.
+    frames_complete : int
+        Emitted frames with no missing packets.
+    frames_incomplete : int
+        Emitted frames with at least one missing packet.
+    frames_dropped_queue_full : int
+        Frames removed from a full output queue to make room for a newer
+        frame.
+    frames_timed_out : int
+        Frame buffers with a received leader that were discarded after the
+        hard timeout without being emitted.
+    frames_evicted : int
+        Frame buffers discarded because 100 frames were in flight at once.
+    frames_lost : int
+        Frames skipped in the ``block_id`` sequence, counted on leader
+        packets. This is an upper bound: packet reordering can over-count.
+    resend_requested : int
+        Packets requested with PACKETRESEND. Counts packets, not frames.
+    resend_recovered : int
+        Requested packets that arrived later. Counts packets, not frames.
+    resend_failed : int
+        Packets still missing when the trailer arrived. Counts packets, not
+        frames.
+    last_packet_time : float or None
+        ``time.monotonic()`` value of the last packet received, or ``None``
+        if no packet has arrived. Use it as a no-data watchdog.
+    """
+
+    packets_received: int = 0
+    frames_emitted: int = 0
+    frames_complete: int = 0
+    frames_incomplete: int = 0
+    frames_dropped_queue_full: int = 0
+    frames_timed_out: int = 0
+    frames_evicted: int = 0
+    frames_lost: int = 0
+    resend_requested: int = 0
+    resend_recovered: int = 0
+    resend_failed: int = 0
+    last_packet_time: float | None = None
+
+
+class _Counters:
+    """Mutable stream counters. Written only by the receive thread."""
+
+    __slots__ = (
+        "frames_complete",
+        "frames_dropped_queue_full",
+        "frames_emitted",
+        "frames_evicted",
+        "frames_incomplete",
+        "frames_lost",
+        "frames_timed_out",
+        "last_packet_time",
+        "packets_received",
+    )
+
+    def __init__(self) -> None:
+        self.packets_received = 0
+        self.frames_emitted = 0
+        self.frames_complete = 0
+        self.frames_incomplete = 0
+        self.frames_dropped_queue_full = 0
+        self.frames_timed_out = 0
+        self.frames_evicted = 0
+        self.frames_lost = 0
+        self.last_packet_time: float | None = None
 
 
 class _FrameBuffer:
@@ -371,6 +453,8 @@ class GVSPReceiver:
         self._stop_event = threading.Event()
         self._frame_buffers: dict[int, _FrameBuffer] = {}
         self._resend_stats = {"requested": 0, "recovered": 0, "failed": 0}
+        self._counters = _Counters()
+        self._last_block_id: int | None = None
         self.resend_enabled = True
 
         # Resend req_id counter (for direct resend from stream socket)
@@ -439,6 +523,7 @@ class GVSPReceiver:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
+        self._last_block_id = None
         self._send_firewall_packet()
         self._thread = threading.Thread(target=self._receive_loop, daemon=True)
         self._thread.start()
@@ -552,6 +637,48 @@ class GVSPReceiver:
         """
         self._resend_stats = {"requested": 0, "recovered": 0, "failed": 0}
 
+    @property
+    def stats(self) -> StreamStats:
+        """StreamStats : snapshot of the stream counters.
+
+        Returns a new frozen :class:`StreamStats` on each access. The receive
+        thread updates the counters without a lock, so values read while the
+        stream runs can differ by a packet or a frame from each other. Use
+        ``last_packet_time`` to tell "no packets arrive" from "packets arrive
+        but frames are incomplete"::
+
+            stats = receiver.stats
+            idle = stats.last_packet_time is None or (
+                time.monotonic() - stats.last_packet_time > 1.0
+            )
+        """
+        c = self._counters
+        r = self._resend_stats
+        return StreamStats(
+            packets_received=c.packets_received,
+            frames_emitted=c.frames_emitted,
+            frames_complete=c.frames_complete,
+            frames_incomplete=c.frames_incomplete,
+            frames_dropped_queue_full=c.frames_dropped_queue_full,
+            frames_timed_out=c.frames_timed_out,
+            frames_evicted=c.frames_evicted,
+            frames_lost=c.frames_lost,
+            resend_requested=r["requested"],
+            resend_recovered=r["recovered"],
+            resend_failed=r["failed"],
+            last_packet_time=c.last_packet_time,
+        )
+
+    def reset_stats(self) -> None:
+        """Zero all stream counters, including the resend counters.
+
+        Sets ``last_packet_time`` to ``None``. Does not change the frame
+        queue or the frame buffers. Use :meth:`reset_resend_stats` to zero
+        only the resend counters.
+        """
+        self._counters = _Counters()
+        self.reset_resend_stats()
+
     def flush(self) -> int:
         """Discard residual frames and unread datagrams from a prior session.
 
@@ -580,6 +707,7 @@ class GVSPReceiver:
             except Empty:
                 break
         self._frame_buffers.clear()
+        self._last_block_id = None
         # Drain the OS socket receive buffer without blocking, then restore the
         # loop's short read timeout.
         self._sock.setblocking(False)
@@ -639,6 +767,10 @@ class GVSPReceiver:
             if len(data) < 8:
                 continue
 
+            counters = self._counters
+            counters.packets_received += 1
+            counters.last_packet_time = time.monotonic()
+
             self._parse_packet(data)
 
             # Gap detection is throttled to every _GAP_CHECK_EVERY packets
@@ -676,11 +808,31 @@ class GVSPReceiver:
         payload = data[header_size:]
 
         if packet_type == PACKET_LEADER:
+            self._track_block_id(block_id, extended)
             self._handle_leader(block_id, payload)
         elif packet_type == PACKET_DATA:
             self._handle_data(block_id, packet_id, payload)
         elif packet_type == PACKET_TRAILER:
             self._handle_trailer(block_id, payload)
+
+    def _track_block_id(self, block_id: int, extended: bool) -> None:
+        """Count frames skipped in the block_id sequence (leader packets only).
+
+        16-bit ids wrap from 65535 to 1 (0 is not used). A forward step of
+        less than 32768 counts as a gap. Any other step is a restart or a
+        reordered leader: the tracker re-seeds and nothing is counted.
+        """
+        last = self._last_block_id
+        self._last_block_id = block_id
+        if last is None or block_id == last:
+            return
+        if extended:
+            if block_id > last:
+                self._counters.frames_lost += block_id - last - 1
+            return
+        delta = (block_id - last) % 65535
+        if 0 < delta < 32768:
+            self._counters.frames_lost += delta - 1
 
     def _handle_leader(self, block_id: int, payload: bytes) -> None:
         """Parse leader packet and pre-allocate frame buffer."""
@@ -705,6 +857,7 @@ class GVSPReceiver:
             if len(self._frame_buffers) >= self._MAX_CONCURRENT_FRAMES:
                 oldest = min(self._frame_buffers, key=lambda k: self._frame_buffers[k].created_at)
                 self._frame_buffers.pop(oldest, None)
+                self._counters.frames_evicted += 1
             self._frame_buffers[block_id] = _FrameBuffer(block_id)
         self._frame_buffers[block_id].write_packet(packet_id, payload)
 
@@ -761,7 +914,14 @@ class GVSPReceiver:
             if self._frame_queue.full():
                 with contextlib.suppress(Empty):
                     self._frame_queue.get_nowait()
+                    self._counters.frames_dropped_queue_full += 1
             self._frame_queue.put((frame, info))
+            counters = self._counters
+            counters.frames_emitted += 1
+            if missing_packets == 0:
+                counters.frames_complete += 1
+            else:
+                counters.frames_incomplete += 1
 
         self._frame_buffers.pop(buf.block_id, None)
 
@@ -810,6 +970,8 @@ class GVSPReceiver:
 
             # Hard timeout: drop frame
             if age > self._frame_retention * 5:
+                if buf.leader_received:
+                    self._counters.frames_timed_out += 1
                 to_remove.append(block_id)
 
         for bid in to_remove:

@@ -18,6 +18,10 @@ Version 0.3.0
   ``local_ip`` now returns the bound address, so it is ``"0.0.0.0"`` and not
   an empty string when the receiver binds to all interfaces.
   Assignment to ``local_ip`` now raises ``AttributeError``.
+- Added ``GVSPReceiver.stats``, a snapshot of the stream counters as a frozen
+  ``StreamStats``. It counts packets, emitted, complete, incomplete, dropped,
+  timed-out and lost frames, resend packets, and the time of the last packet.
+  Added ``GVSPReceiver.reset_stats()`` to zero all counters.
 
 Version 0.2.3
 -------------
