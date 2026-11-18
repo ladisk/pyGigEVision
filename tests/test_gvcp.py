@@ -446,6 +446,108 @@ class TestHeartbeatControlLoss:
         assert client._cmd_timeout == 0.5
 
 
+class TestRetryTimeoutProperties:
+    """Public n_retries and cmd_timeout."""
+
+    def test_defaults_and_init_args(self):
+        client = GVCPClient("192.168.1.1")
+        assert client.n_retries == 3
+        assert client.cmd_timeout == 0.5
+        client = GVCPClient("192.168.1.1", n_retries=2, cmd_timeout=0.4)
+        assert client.n_retries == 2
+        assert client.cmd_timeout == 0.4
+
+    @pytest.mark.parametrize("value", [0, -1, 1.5, True, "3"])
+    def test_invalid_n_retries(self, value):
+        client = GVCPClient("192.168.1.1")
+        with pytest.raises(ValueError):
+            client.n_retries = value
+        assert client.n_retries == 3
+
+    @pytest.mark.parametrize("value", [0, -0.1, float("nan"), "1"])
+    def test_invalid_cmd_timeout(self, value):
+        client = GVCPClient("192.168.1.1")
+        with pytest.raises(ValueError):
+            client.cmd_timeout = value
+        assert client.cmd_timeout == 0.5
+
+    def test_invalid_init_args(self):
+        with pytest.raises(ValueError):
+            GVCPClient("192.168.1.1", n_retries=0)
+        with pytest.raises(ValueError):
+            GVCPClient("192.168.1.1", cmd_timeout=0)
+
+    def test_send_cmd_uses_public_values(self):
+        client = _client_with_mock_socket()
+        client.n_retries = 2
+        client.cmd_timeout = 0.05
+        client._sock.recvfrom = MagicMock(side_effect=socket.timeout)
+        with pytest.raises(GVCPError, match="2 retries"):
+            client._read_reg_raw(0xD300)
+        assert client._sock.sendto.call_count == 2
+
+
+class TestReadOnlyClient:
+    """connect(control=False)."""
+
+    @pytest.fixture
+    def patched(self, monkeypatch):
+        sock = MagicMock()
+        monkeypatch.setattr(socket, "socket", MagicMock(return_value=sock))
+        return sock
+
+    def test_read_only_connect_sends_nothing_and_no_thread(self, patched):
+        client = GVCPClient("192.168.1.1")
+        client.connect(control=False)
+        assert client.read_only is True
+        assert client._connected is True
+        assert client._heartbeat_thread is None
+        patched.sendto.assert_not_called()
+        patched.settimeout.assert_called_with(client.timeout)
+
+    def test_default_connect_is_not_read_only(self):
+        assert GVCPClient("192.168.1.1").read_only is False
+
+    def test_write_raises_before_sending(self, patched):
+        client = GVCPClient("192.168.1.1")
+        client.connect(control=False)
+        with pytest.raises(GVCPError, match="control=False"):
+            client.write_reg(0xD300, 1)
+        with pytest.raises(GVCPError, match="control=False"):
+            client.write_float(0xE808, 1.0)
+        patched.sendto.assert_not_called()
+
+    def test_read_works(self, patched):
+        client = GVCPClient("192.168.1.1")
+        client.connect(control=False)
+        patched.recvfrom.return_value = (_make_readreg_ack(1, 640), ("192.168.1.1", 3956))
+        assert client.read_reg(0xD300) == 640
+
+    def test_disconnect_sends_nothing_and_closes(self, patched):
+        client = GVCPClient("192.168.1.1")
+        client.connect(control=False)
+        client.disconnect()
+        patched.sendto.assert_not_called()
+        patched.close.assert_called_once()
+        assert client._connected is False
+
+    def test_mode_mismatch_raises_same_mode_noop(self, patched):
+        client = GVCPClient("192.168.1.1")
+        client.connect(control=False)
+        client.connect(control=False)
+        with pytest.raises(GVCPError, match="already connected"):
+            client.connect(control=True)
+
+    def test_reconnect_with_control_after_read_only(self, patched):
+        client = GVCPClient("192.168.1.1")
+        client.connect(control=False)
+        client.disconnect()
+        patched.recvfrom.return_value = (_make_writereg_ack(1), ("192.168.1.1", 3956))
+        client.connect()
+        assert client.read_only is False
+        client.disconnect()
+
+
 class TestControlLostPublicApi:
     """Test the public control_lost property and on_control_lost callback."""
 
