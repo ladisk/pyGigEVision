@@ -1,6 +1,14 @@
 Changelog
 =========
 
+Version 0.3.0
+-------------
+
+- Added ``GVSPReceiver.stats``, a snapshot of the stream counters as a frozen
+  ``StreamStats``. It counts packets, emitted, complete, incomplete, dropped,
+  timed-out and lost frames, resend packets, and the time of the last packet.
+  Added ``GVSPReceiver.reset_stats()`` to zero all counters.
+
 Version 0.2.3
 -------------
 

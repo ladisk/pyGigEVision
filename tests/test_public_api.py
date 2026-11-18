@@ -11,3 +11,8 @@ def test_standard_is_importable():
     from pyGigEVision import standard
 
     assert hasattr(standard, "REG_CCP")
+
+
+def test_stream_stats_is_public():
+    assert "StreamStats" in pyGigEVision.__all__
+    assert pyGigEVision.StreamStats is pyGigEVision.gvsp.StreamStats

@@ -14,6 +14,8 @@ Public API summary:
   status code.
 * :class:`GVSPReceiver`: background UDP receiver that reassembles
   image frames into NumPy arrays.
+* :class:`StreamStats`: frozen snapshot of the receiver counters, from
+  :attr:`GVSPReceiver.stats`.
 * :func:`discover`: broadcast discovery to find cameras on the network.
 * :func:`force_ip`: broadcast a FORCEIP to assign a camera IP by MAC.
 * :func:`bootstrap`: single-call convenience: open GVCP, take CCP
@@ -41,7 +43,7 @@ __version__ = "0.2.3"
 from .bootstrap import bootstrap
 from .genicam import fetch_genicam_xml, parse_first_url
 from .gvcp import GVCPClient, GVCPError
-from .gvsp import GVSPReceiver
+from .gvsp import GVSPReceiver, StreamStats
 
 # Namespace note: the line above re-exports the function `bootstrap` at the
 # package level, which shadows the `bootstrap` submodule when accessed as a
@@ -59,6 +61,7 @@ __all__ = [
     "GVCPClient",
     "GVCPError",
     "GVSPReceiver",
+    "StreamStats",
     "discover",
     "force_ip",
     "fetch_genicam_xml",

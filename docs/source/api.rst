@@ -13,7 +13,7 @@ the submodules below for convenience. See the per-module sections for
 full documentation:
 
 * :class:`~pyGigEVision.gvcp.GVCPClient`, :exc:`~pyGigEVision.gvcp.GVCPError` (from :mod:`pyGigEVision.gvcp`)
-* :class:`~pyGigEVision.gvsp.GVSPReceiver` (from :mod:`pyGigEVision.gvsp`)
+* :class:`~pyGigEVision.gvsp.GVSPReceiver`, :class:`~pyGigEVision.gvsp.StreamStats` (from :mod:`pyGigEVision.gvsp`)
 * :func:`~pyGigEVision.genicam.fetch_genicam_xml`, :func:`~pyGigEVision.genicam.parse_first_url` (from :mod:`pyGigEVision.genicam`)
 * :func:`~pyGigEVision.bootstrap.bootstrap` (from :mod:`pyGigEVision.bootstrap`)
 

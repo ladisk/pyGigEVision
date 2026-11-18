@@ -15,6 +15,7 @@ from pyGigEVision.gvsp import (
     PIXEL_MONO8,
     PIXEL_MONO16,
     GVSPReceiver,
+    StreamStats,
     _FrameBuffer,
 )
 
@@ -283,6 +284,190 @@ class TestResendStats:
             assert rx._resend_stats == {"requested": 0, "recovered": 0, "failed": 0}
         finally:
             rx.close()
+
+
+def _make_buf(rx, block_id, *, packets=(1, 2), leader=True):
+    rx._packet_data_size = 8
+    buf = _FrameBuffer(block_id)
+    buf.leader_received = leader
+    buf.pixel_format = PIXEL_MONO16
+    buf.width, buf.height = 4, 2  # 2 packets of 8
+    buf.setup_buffer(8)
+    for p in packets:
+        buf.write_packet(p, b"\x00" * 8)
+    rx._frame_buffers[block_id] = buf
+    return buf
+
+
+class TestStreamStats:
+    """Public stream statistics and reset_stats()."""
+
+    @pytest.fixture
+    def rx(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        yield rx
+        rx.close()
+
+    def test_initial_snapshot_is_zero_and_frozen(self, rx):
+        s = rx.stats
+        assert isinstance(s, StreamStats)
+        assert s == StreamStats()
+        assert s.last_packet_time is None
+        with pytest.raises(AttributeError):
+            s.packets_received = 1
+
+    def test_packets_received_and_last_packet_time(self, rx):
+        rx._sock.sendto(b"\x00" * 40, ("127.0.0.1", rx.port))
+        rx._sock.sendto(b"\x00" * 4, ("127.0.0.1", rx.port))  # too short
+        rx.start()
+        deadline = time.monotonic() + 2.0
+        while rx.stats.packets_received < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(0.1)
+        rx.stop()
+        s = rx.stats
+        assert s.packets_received == 1
+        assert s.last_packet_time is not None
+        assert s.last_packet_time <= time.monotonic()
+
+    def test_complete_frame(self, rx):
+        _make_buf(rx, 1)
+        rx._handle_trailer(1, b"")
+        s = rx.stats
+        assert (s.frames_emitted, s.frames_complete, s.frames_incomplete) == (1, 1, 0)
+
+    def test_incomplete_frame(self, rx):
+        _make_buf(rx, 1, packets=(1,))
+        rx._handle_trailer(1, b"")
+        s = rx.stats
+        assert (s.frames_emitted, s.frames_complete, s.frames_incomplete) == (1, 0, 1)
+        assert s.resend_failed == 1
+
+    def test_unassemblable_buffer_not_emitted(self, rx):
+        rx._frame_buffers[3] = _FrameBuffer(3)  # no leader, no data
+        rx._handle_trailer(3, b"")
+        assert rx.stats.frames_emitted == 0
+
+    def test_queue_full_drop_counted(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1", max_queue=1)
+        try:
+            _make_buf(rx, 1)
+            rx._handle_trailer(1, b"")
+            assert rx.stats.frames_dropped_queue_full == 0
+            _make_buf(rx, 2)
+            rx._handle_trailer(2, b"")
+            s = rx.stats
+            assert s.frames_dropped_queue_full == 1
+            assert s.frames_emitted == 2
+        finally:
+            rx.close()
+
+    def test_timed_out_only_with_leader(self, rx):
+        with_leader = _make_buf(rx, 1, packets=(), leader=True)
+        no_leader = _FrameBuffer(2)
+        rx._frame_buffers[2] = no_leader
+        rx.resend_enabled = False
+        old = time.monotonic() - 100.0
+        for b in (with_leader, no_leader):
+            b.created_at = old
+            b.last_packet_at = time.monotonic()  # recent: no retention emit
+        rx._check_gaps_and_timeouts()
+        assert rx._frame_buffers == {}
+        assert rx.stats.frames_timed_out == 1
+        assert rx.stats.frames_emitted == 0
+
+    def test_eviction_at_buffer_cap(self, rx):
+        for i in range(rx._MAX_CONCURRENT_FRAMES):
+            rx._frame_buffers[i + 1000] = _FrameBuffer(i + 1000)
+        rx._handle_data(5, 1, b"\x00" * 8)
+        assert rx.stats.frames_evicted == 1
+        assert len(rx._frame_buffers) == rx._MAX_CONCURRENT_FRAMES
+
+    def test_resend_counters_in_snapshot(self, rx):
+        rx._resend_stats.update(requested=5, recovered=2, failed=1)
+        s = rx.stats
+        assert (s.resend_requested, s.resend_recovered, s.resend_failed) == (5, 2, 1)
+
+    def test_recovered_counted_in_snapshot(self, rx):
+        buf = _make_buf(rx, 9)
+        buf._resend_requested = {1}
+        rx._handle_trailer(9, b"")
+        assert rx.stats.resend_recovered == 1
+
+    def test_reset_stats_zeroes_everything(self, rx):
+        _make_buf(rx, 1, packets=(1,))
+        rx._handle_trailer(1, b"")
+        rx._counters.packets_received = 7
+        rx._counters.last_packet_time = 1.0
+        rx._resend_stats.update(requested=5, recovered=2, failed=1)
+        old = rx.stats
+        rx.reset_stats()
+        assert rx.stats == StreamStats()
+        assert old.packets_received == 7  # old snapshot unchanged
+
+    def test_reset_resend_stats_keeps_other_counters(self, rx):
+        rx._counters.packets_received = 7
+        rx._resend_stats["requested"] = 3
+        rx.reset_resend_stats()
+        s = rx.stats
+        assert s.packets_received == 7
+        assert s.resend_requested == 0
+
+    @staticmethod
+    def _leader(rx, bid, extended=False):
+        rx._track_block_id(bid, extended)
+
+    def test_gap_tracking_counts_skipped_ids(self, rx):
+        for bid in (1, 2, 5, 6):
+            self._leader(rx, bid)
+        assert rx.stats.frames_lost == 2
+
+    def test_gap_tracking_ignores_duplicate(self, rx):
+        for bid in (10, 11, 11, 12):
+            self._leader(rx, bid)
+        assert rx.stats.frames_lost == 0
+
+    def test_gap_tracking_restart_not_counted(self, rx):
+        for bid in (5000, 5001, 1, 2):
+            self._leader(rx, bid)
+        assert rx.stats.frames_lost == 0
+
+    def test_gap_tracking_wraps_and_skips_zero(self, rx):
+        for bid in (65534, 65535, 1, 2):
+            self._leader(rx, bid)
+        assert rx.stats.frames_lost == 0
+        self._leader(rx, 4)  # id 3 skipped
+        assert rx.stats.frames_lost == 1
+
+    def test_gap_tracking_extended_ids(self, rx):
+        for bid in (1, 2, 70000, 70001):
+            self._leader(rx, bid, extended=True)
+        assert rx.stats.frames_lost == 69997
+        self._leader(rx, 1, extended=True)  # restart
+        assert rx.stats.frames_lost == 69997
+
+    def test_gap_tracking_via_parsed_leaders(self, rx):
+        import struct
+
+        def leader(bid):
+            return struct.pack(">HHBBH", 0, bid, 0x01, 0, 0) + b"\x00" * 36
+
+        for bid in (1, 3):
+            rx._parse_packet(leader(bid))
+        assert rx.stats.frames_lost == 1
+
+    def test_flush_and_start_reset_tracker_not_counters(self, rx):
+        for bid in (1, 5):
+            self._leader(rx, bid)
+        rx.flush()
+        assert rx._last_block_id is None
+        self._leader(rx, 1)
+        assert rx.stats.frames_lost == 3
+
+        rx._last_block_id = 9
+        rx.start()
+        rx.stop()
+        assert rx._last_block_id is None
 
 
 class TestFlush:
