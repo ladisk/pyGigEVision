@@ -12,6 +12,12 @@ Version 0.3.0
   constructor argument ``on_control_lost``. The heartbeat thread calls this
   function once when the camera clears the control bit in ``REG_CCP``. Heartbeat
   network errors do not set ``control_lost``.
+- Added the ``GVSPReceiver.packet_size`` property with a setter and a
+  read-only ``GVSPReceiver.local_ip`` property. Drivers can now change the
+  packet size and read the bound address without private attributes.
+  ``local_ip`` now returns the bound address, so it is ``"0.0.0.0"`` and not
+  an empty string when the receiver binds to all interfaces.
+  Assignment to ``local_ip`` now raises ``AttributeError``.
 
 Version 0.2.3
 -------------
