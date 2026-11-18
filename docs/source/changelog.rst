@@ -1,6 +1,14 @@
 Changelog
 =========
 
+Version 0.3.0
+-------------
+
+- Added read-only mode: ``GVCPClient.connect(control=False)`` opens the socket
+  without CCP control or heartbeat, and register writes raise ``GVCPError``.
+  ``n_retries`` and ``cmd_timeout`` are now public constructor arguments and
+  properties.
+
 Version 0.2.3
 -------------
 

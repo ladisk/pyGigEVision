@@ -236,6 +236,12 @@ class GVCPClient:
     timeout : float, optional
         Socket timeout in seconds for the initial connection and the
         overall socket.  Default is ``2.0``.
+    n_retries : int, optional
+        Number of send attempts for each command before
+        :exc:`GVCPError` is raised.  Must be at least 1.  Default is ``3``.
+    cmd_timeout : float, optional
+        Seconds to wait for an ACK in each attempt.  Must be greater than 0.
+        Default is ``0.5``.
 
     Notes
     -----
@@ -272,6 +278,8 @@ class GVCPClient:
         camera_ip: str,
         local_ip: str | None = None,
         timeout: float = 2.0,
+        n_retries: int = 3,
+        cmd_timeout: float = 0.5,
     ) -> None:
         self.camera_ip = camera_ip
         self.local_ip = local_ip or ""
@@ -284,8 +292,36 @@ class GVCPClient:
         self._control_lost = False
         self._heartbeat_thread: threading.Thread | None = None
         self._heartbeat_stop = threading.Event()
-        self._n_retries = 3
-        self._cmd_timeout = 0.5  # seconds per attempt
+        self._read_only = False
+        self.n_retries = n_retries
+        self.cmd_timeout = cmd_timeout
+
+    @property
+    def n_retries(self) -> int:
+        """int : Send attempts per command (at least 1)."""
+        return self._n_retries
+
+    @n_retries.setter
+    def n_retries(self, value: int) -> None:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"n_retries must be an integer >= 1, got {value!r}")
+        self._n_retries = value
+
+    @property
+    def cmd_timeout(self) -> float:
+        """float : Seconds to wait for an ACK in each attempt (greater than 0)."""
+        return self._cmd_timeout
+
+    @cmd_timeout.setter
+    def cmd_timeout(self, value: float) -> None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
+            raise ValueError(f"cmd_timeout must be a number > 0, got {value!r}")
+        self._cmd_timeout = float(value)
+
+    @property
+    def read_only(self) -> bool:
+        """bool : ``True`` if connected with ``control=False``."""
+        return self._read_only
 
     # --- Context Manager ---
 
@@ -504,8 +540,11 @@ class GVCPClient:
 
     # --- Connection ---
 
-    def connect(self, force: bool = True) -> None:
+    def connect(self, force: bool = True, control: bool = True) -> None:
         """Open the UDP socket, take CCP control, and start the heartbeat thread.
+
+        With ``control=False`` the client is read-only: it opens the socket,
+        sends nothing, takes no CCP control and starts no heartbeat thread.
 
         If another application (or a stale previous session) holds the CCP
         control privilege and *force* is ``True``, this method polls with
@@ -514,7 +553,8 @@ class GVCPClient:
         common scenario where a previous Python session crashed without
         calling :meth:`disconnect`.
 
-        A call on an already-connected client is a no-op.
+        A call on an already-connected client with the same mode is a
+        no-op.
 
         Parameters
         ----------
@@ -522,24 +562,47 @@ class GVCPClient:
             If ``True`` (default), retry on ``ACCESS_DENIED`` for up to
             15 seconds, printing a warning on the first retry.  If
             ``False``, raise :exc:`GVCPError` immediately when access is
-            denied.
+            denied.  Ignored when *control* is ``False``.
+        control : bool, optional
+            If ``True`` (default), take CCP control and start the heartbeat.
+            If ``False``, open a read-only client.  Register writes raise
+            :exc:`GVCPError`.  :meth:`send_packetresend` is still allowed.
+            If the camera uses exclusive access (CCP bit 0), it can refuse
+            reads from this client with ``ACCESS_DENIED``.
 
         Raises
         ------
         GVCPError
             If the CCP register write fails for any reason other than
             ``ACCESS_DENIED``, or if *force* is ``True`` but the 15-second
-            retry window expires without gaining control.
+            retry window expires without gaining control, or if the client
+            is already connected in the other mode.
         OSError
             If the UDP socket cannot be created or bound.
         """
         if self._connected:
+            if self._read_only == control:
+                mode = "read-only" if self._read_only else "control"
+                raise GVCPError(
+                    f"already connected in {mode} mode; disconnect before changing mode"
+                )
             return
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        if self.local_ip:
-            self._sock.bind((self.local_ip, 0))
-        self._sock.settimeout(self.timeout)
+        try:
+            if self.local_ip:
+                self._sock.bind((self.local_ip, 0))
+            self._sock.settimeout(self.timeout)
+        except Exception:
+            self._sock.close()
+            self._sock = None
+            raise
+
+        if not control:
+            self._read_only = True
+            self._connected = True
+            self._control_lost = False
+            return
 
         # Take control: poll on ACCESS_DENIED until old session's
         # heartbeat times out.
@@ -572,6 +635,7 @@ class GVCPClient:
             self._sock.close()
             self._sock = None
             raise
+        self._read_only = False
         self._connected = True
         self._control_lost = False
 
@@ -588,9 +652,18 @@ class GVCPClient:
         waiting for the heartbeat timeout.  Any errors during the release are
         silently suppressed to ensure the socket is always closed.
 
-        A call on a client that is not connected is a no-op.
+        A read-only client only closes the socket.  A call on a client that
+        is not connected is a no-op.
         """
         if not self._connected:
+            return
+
+        if self._read_only:
+            self._connected = False
+            self._read_only = False
+            if self._sock:
+                self._sock.close()
+                self._sock = None
             return
 
         self._heartbeat_stop.set()
@@ -817,16 +890,18 @@ class GVCPClient:
         ------
         GVCPError
             If the camera returns a non-SUCCESS status in the ACK, or if
-            all ``_n_retries`` attempts time out without a matching ACK.
+            all :attr:`n_retries` attempts time out without a matching ACK.
         """
         req_id = self._next_id()
         header = struct.pack(">BBHHH", GVCP_KEY, flag, cmd, len(payload), req_id)
         hard_deadline = time.monotonic() + 30.0
+        n_retries = self._n_retries
+        cmd_timeout = self._cmd_timeout
 
-        for _attempt in range(self._n_retries):
+        for _attempt in range(n_retries):
             self._sock.sendto(header + payload, (self.camera_ip, GVCP_PORT))
 
-            deadline = time.monotonic() + self._cmd_timeout
+            deadline = time.monotonic() + cmd_timeout
             while time.monotonic() < deadline:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -863,7 +938,7 @@ class GVCPClient:
                     raise GVCPError(f"Command 0x{cmd:04X} failed", ack_status)
                 return data
 
-        raise GVCPError(f"Timeout waiting for ACK (cmd=0x{cmd:04X}, {self._n_retries} retries)")
+        raise GVCPError(f"Timeout waiting for ACK (cmd=0x{cmd:04X}, {n_retries} retries)")
 
     def _read_reg_raw(self, addr: int) -> int:
         """Send a READREG command and return the 32-bit result (not locked)."""
@@ -873,6 +948,10 @@ class GVCPClient:
 
     def _write_reg_raw(self, addr: int, value: int) -> None:
         """Send a WRITEREG command for a single register (not locked)."""
+        if self._read_only:
+            raise GVCPError(
+                "client was opened with control=False; reconnect with control=True to write"
+            )
         payload = struct.pack(">II", addr, value)
         self._send_cmd(FLAG_ACK, CMD_WRITEREG, payload)
 
