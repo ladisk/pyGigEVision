@@ -30,15 +30,19 @@ from __future__ import annotations
 
 import contextlib
 import ipaddress
+import logging
 import select
 import socket
 import struct
 import threading
 import time
+from collections.abc import Callable
 
 import psutil
 
 from .standard import REG_CCP
+
+logger = logging.getLogger(__name__)
 
 # --- GVCP Constants ---
 GVCP_PORT = 3956
@@ -236,6 +240,19 @@ class GVCPClient:
     timeout : float, optional
         Socket timeout in seconds for the initial connection and the
         overall socket.  Default is ``2.0``.
+    on_control_lost : callable or None, optional
+        Function called with no arguments, once, from the heartbeat thread
+        when the camera clears the control bit in ``REG_CCP``.  It runs
+        outside the client lock, so it can call client methods.  Exceptions
+        it raises are logged and do not stop the heartbeat.  Default is
+        ``None``.
+
+    Attributes
+    ----------
+    control_lost : bool
+        ``True`` after the heartbeat sees the control bit cleared in
+        ``REG_CCP``.  Reset by :meth:`connect`.  Heartbeat network errors
+        do not set it.
 
     Notes
     -----
@@ -272,6 +289,7 @@ class GVCPClient:
         camera_ip: str,
         local_ip: str | None = None,
         timeout: float = 2.0,
+        on_control_lost: Callable[[], None] | None = None,
     ) -> None:
         self.camera_ip = camera_ip
         self.local_ip = local_ip or ""
@@ -282,10 +300,20 @@ class GVCPClient:
         self._req_id = 0
         self._connected = False
         self._control_lost = False
+        self._on_control_lost = on_control_lost
         self._heartbeat_thread: threading.Thread | None = None
         self._heartbeat_stop = threading.Event()
         self._n_retries = 3
         self._cmd_timeout = 0.5  # seconds per attempt
+
+    @property
+    def control_lost(self) -> bool:
+        """bool: ``True`` if the camera cleared the control bit in ``REG_CCP``.
+
+        Set by the heartbeat thread.  Heartbeat network errors do not set
+        it; only a cleared control bit does.  :meth:`connect` resets it.
+        """
+        return self._control_lost
 
     # --- Context Manager ---
 
@@ -594,7 +622,9 @@ class GVCPClient:
             return
 
         self._heartbeat_stop.set()
-        if self._heartbeat_thread:
+        # The on_control_lost callback runs on the heartbeat thread and can
+        # call disconnect(); a thread cannot join itself.
+        if self._heartbeat_thread and self._heartbeat_thread is not threading.current_thread():
             self._heartbeat_thread.join(timeout=5.0)
 
         with contextlib.suppress(OSError, GVCPError):
@@ -938,6 +968,9 @@ class GVCPClient:
         reset the privilege), sets :attr:`_control_lost` to ``True`` so
         callers can detect the loss of control.
 
+        The callback given as ``on_control_lost`` is called once, on the first
+        loss, outside the client lock.
+
         Network and protocol errors are silently suppressed; the loop
         continues until :attr:`_heartbeat_stop` is set by :meth:`disconnect`.
         """
@@ -945,7 +978,18 @@ class GVCPClient:
             try:
                 with self._lock:
                     value = self._read_reg_raw(REG_CCP)
-                if (value & 0x02) == 0:  # control bit cleared
+                if (value & 0x02) == 0 and not self._control_lost:  # control bit cleared
                     self._control_lost = True
+                    self._notify_control_lost()
             except (OSError, GVCPError):
                 pass
+
+    def _notify_control_lost(self) -> None:
+        """Call the ``on_control_lost`` callback and log any exception."""
+        callback = self._on_control_lost
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            logger.exception("on_control_lost callback raised")

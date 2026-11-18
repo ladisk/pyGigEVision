@@ -6,6 +6,7 @@ a physical camera.
 
 import socket
 import struct
+import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -443,3 +444,98 @@ class TestHeartbeatControlLoss:
         client = GVCPClient("192.168.1.1")
         assert client._n_retries == 3
         assert client._cmd_timeout == 0.5
+
+
+class TestControlLostPublicApi:
+    """Test the public control_lost property and on_control_lost callback."""
+
+    @staticmethod
+    def _run_loop(client, values):
+        """Run the heartbeat loop once per CCP value in ``values``."""
+        it = iter(values)
+        client._read_reg_raw = lambda addr: next(it)
+        calls = iter([False] * len(values) + [True])
+        client._heartbeat_stop.wait = lambda timeout=None: next(calls)
+        client._heartbeat_loop()
+
+    def test_property_default_false(self):
+        client = GVCPClient("192.168.1.1")
+        assert client.control_lost is False
+
+    def test_property_is_read_only(self):
+        client = GVCPClient("192.168.1.1")
+        with pytest.raises(AttributeError):
+            client.control_lost = True
+
+    def test_property_reflects_flag(self):
+        client = GVCPClient("192.168.1.1")
+        client._control_lost = True
+        assert client.control_lost is True
+
+    def test_heartbeat_sets_property(self):
+        client = GVCPClient("192.168.1.1")
+        self._run_loop(client, [0x02, 0x00])
+        assert client.control_lost is True
+
+    def test_callback_default_none(self):
+        client = GVCPClient("192.168.1.1")
+        assert client._on_control_lost is None
+
+    def test_callback_called_once(self):
+        cb = MagicMock()
+        client = GVCPClient("192.168.1.1", on_control_lost=cb)
+        self._run_loop(client, [0x02, 0x00, 0x00, 0x00])
+        cb.assert_called_once_with()
+
+    def test_callback_not_called_when_control_held(self):
+        cb = MagicMock()
+        client = GVCPClient("192.168.1.1", on_control_lost=cb)
+        self._run_loop(client, [0x02, 0x02])
+        cb.assert_not_called()
+        assert client.control_lost is False
+
+    def test_callback_runs_outside_lock(self):
+        client = GVCPClient("192.168.1.1")
+        seen = []
+        client._on_control_lost = lambda: seen.append(client._lock.locked())
+        self._run_loop(client, [0x00])
+        assert seen == [False]
+
+    def test_callback_can_disconnect(self):
+        client = GVCPClient("192.168.1.1")
+        sock = MagicMock()
+        client._sock = sock
+        client._connected = True
+        client._write_reg_raw = MagicMock()
+
+        def on_lost():
+            client._heartbeat_thread = threading.current_thread()
+            client.disconnect()
+
+        client._on_control_lost = on_lost
+        self._run_loop(client, [0x00])
+        assert client._connected is False
+        sock.close.assert_called_once()
+        client._write_reg_raw.assert_called_once_with(REG_CCP, 0x00000000)
+
+    def test_callback_exception_is_logged(self, caplog):
+        def bad():
+            raise RuntimeError("boom")
+
+        client = GVCPClient("192.168.1.1", on_control_lost=bad)
+        with caplog.at_level("WARNING", logger="pyGigEVision.gvcp"):
+            self._run_loop(client, [0x00, 0x02])
+        assert client.control_lost is True
+        assert "boom" in caplog.text or "on_control_lost" in caplog.text
+
+    def test_network_error_does_not_set_flag(self):
+        client = GVCPClient("192.168.1.1")
+
+        def fail(addr):
+            raise GVCPError("Timeout")
+
+        client._read_reg_raw = fail
+        calls = iter([False, True])
+        client._heartbeat_stop.wait = lambda timeout=None: next(calls)
+        client._heartbeat_loop()
+        assert client.control_lost is False

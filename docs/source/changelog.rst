@@ -1,6 +1,14 @@
 Changelog
 =========
 
+Version 0.3.0
+-------------
+
+- Added the read-only property ``GVCPClient.control_lost`` and the optional
+  constructor argument ``on_control_lost``. The heartbeat thread calls this
+  function once when the camera clears the control bit in ``REG_CCP``. Heartbeat
+  network errors do not set ``control_lost``.
+
 Version 0.2.3
 -------------
 
