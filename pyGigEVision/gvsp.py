@@ -100,7 +100,7 @@ class StreamStats:
     Get a snapshot with :attr:`GVSPReceiver.stats`. Counters start at zero
     and grow until :meth:`GVSPReceiver.reset_stats` is called.
 
-    Attributes
+    Parameters
     ----------
     packets_received : int
         Datagrams of at least 8 bytes read from the socket.
