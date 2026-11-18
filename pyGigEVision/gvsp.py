@@ -343,7 +343,6 @@ class GVSPReceiver:
         initial_packet_timeout: float = 0.005,
         frame_retention: float = 0.200,
     ) -> None:
-        self.local_ip = local_ip
         self.byteswap = byteswap
         self._gvcp = gvcp_client
         self._packet_data_size = packet_size - 8
@@ -358,6 +357,7 @@ class GVSPReceiver:
             self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
         self._sock.bind((local_ip, local_port))
         self._sock.settimeout(0.05)  # short timeout for responsive gap checking
+        self._local_ip = self._sock.getsockname()[0]
 
         self._camera_port = camera_port
         if self._camera_port is None and gvcp_client is not None:
@@ -387,6 +387,40 @@ class GVSPReceiver:
             print(receiver.port)  # e.g. 49152
         """
         return self._port
+
+    @property
+    def local_ip(self) -> str:
+        """str : Local IP address the receiver socket is bound to.
+
+        The value is read once, right after the bind, so it stays valid
+        after :meth:`close`. It is ``"0.0.0.0"`` when the receiver is bound
+        to all interfaces (empty *local_ip* argument). Write this address to
+        the camera stream destination register only if it is a specific
+        interface address.
+        """
+        return self._local_ip
+
+    @property
+    def packet_size(self) -> int:
+        """int : Full GVSP packet size in bytes, including the 8-byte header.
+
+        The receiver subtracts the 8-byte header to get the payload size.
+        Set this value when the camera packet size changes, for example for
+        jumbo frames. The new value applies from the next frame leader
+        packet. A frame that is already in progress keeps its old size.
+
+        Raises
+        ------
+        ValueError
+            If set to a value that is not an integer in the range 9 to 65535.
+        """
+        return self._packet_data_size + 8
+
+    @packet_size.setter
+    def packet_size(self, value: int) -> None:
+        if isinstance(value, bool) or not isinstance(value, int) or not 9 <= value <= 65535:
+            raise ValueError(f"packet_size must be an integer in 9..65535, got {value!r}")
+        self._packet_data_size = value - 8
 
     def start(self) -> None:
         """Start the background receiver thread.
@@ -687,7 +721,9 @@ class GVSPReceiver:
         if buf.expected_packets == 0 and buf.leader_received and buf.width > 0 and buf.height > 0:
             bpp = PIXEL_BPP.get(buf.pixel_format, 2)
             total_bytes = buf.width * buf.height * bpp
-            buf.expected_packets = math.ceil(total_bytes / self._packet_data_size)
+            buf.expected_packets = math.ceil(
+                total_bytes / (buf._packet_data_size or self._packet_data_size)
+            )
 
         # Log missing packets
         missing = buf.missing_packets()
