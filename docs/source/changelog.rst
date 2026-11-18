@@ -4,6 +4,20 @@ Changelog
 Version 0.3.0
 -------------
 
+- Added read-only mode: ``GVCPClient.connect(control=False)`` opens the socket
+  without CCP control or heartbeat, and register writes raise ``GVCPError``.
+  ``n_retries`` and ``cmd_timeout`` are now public constructor arguments and
+  properties.
+- Added the read-only property ``GVCPClient.control_lost`` and the optional
+  constructor argument ``on_control_lost``. The heartbeat thread calls this
+  function once when the camera clears the control bit in ``REG_CCP``. Heartbeat
+  network errors do not set ``control_lost``.
+- Added the ``GVSPReceiver.packet_size`` property with a setter and a
+  read-only ``GVSPReceiver.local_ip`` property. Drivers can now change the
+  packet size and read the bound address without private attributes.
+  ``local_ip`` now returns the bound address, so it is ``"0.0.0.0"`` and not
+  an empty string when the receiver binds to all interfaces.
+  Assignment to ``local_ip`` now raises ``AttributeError``.
 - Added ``GVSPReceiver.stats``, a snapshot of the stream counters as a frozen
   ``StreamStats``. It counts packets, emitted, complete, incomplete, dropped,
   timed-out and lost frames, resend packets, and the time of the last packet.

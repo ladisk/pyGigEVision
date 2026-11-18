@@ -613,3 +613,71 @@ class TestFirewallPacket:
             assert rx._thread.is_alive()
         finally:
             rx.close()
+
+
+class TestPacketSizeAndLocalIp:
+    def test_packet_size_default_and_roundtrip(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            assert rx.packet_size == 1500
+            rx.packet_size = 9000
+            assert rx.packet_size == 9000
+            assert rx._packet_data_size == 8992
+        finally:
+            rx.close()
+
+    @pytest.mark.parametrize("bad", [8, 0, -1, 65536, 1500.0, "1500", None, True])
+    def test_packet_size_rejects_invalid(self, bad):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            with pytest.raises(ValueError):
+                rx.packet_size = bad
+            assert rx.packet_size == 1500
+        finally:
+            rx.close()
+
+    def test_packet_size_limits_accepted(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            rx.packet_size = 9
+            assert rx.packet_size == 9
+            rx.packet_size = 65535
+            assert rx.packet_size == 65535
+        finally:
+            rx.close()
+
+    def test_local_ip_is_bound_address_and_read_only(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            assert rx.local_ip == "127.0.0.1"
+            with pytest.raises(AttributeError):
+                rx.local_ip = "1.2.3.4"
+        finally:
+            rx.close()
+        assert rx.local_ip == "127.0.0.1"  # still valid after close
+
+    def test_local_ip_all_interfaces(self):
+        rx = GVSPReceiver()
+        try:
+            assert rx.local_ip == "0.0.0.0"
+        finally:
+            rx.close()
+
+    def test_trailer_uses_buffer_packet_size_after_mid_frame_change(self):
+        rx = GVSPReceiver(local_ip="127.0.0.1")
+        try:
+            buf = _FrameBuffer(7)
+            buf.leader_received = True
+            buf.pixel_format = PIXEL_MONO16
+            buf.width, buf.height = 4, 2  # 16 bytes
+            buf.setup_buffer(8)  # buffer expects 2 packets of 8
+            buf.expected_packets = 0  # force the trailer to compute it
+            buf.write_packet(1, b"\x00" * 8)
+            rx._frame_buffers[7] = buf
+            rx.packet_size = 9000  # change mid-frame
+
+            rx._handle_trailer(7, b"")
+
+            assert rx._resend_stats["failed"] == 1  # 1 missing of 2, not 1 of 1
+        finally:
+            rx.close()
